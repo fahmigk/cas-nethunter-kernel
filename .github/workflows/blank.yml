@@ -30,31 +30,17 @@ jobs:
         run: |
           git clone --depth=1 -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Inject NetHunter & Root Defconfigs (Seccomp Bypass)
+      - name: Inject NetHunter Drivers into Stock Config
         run: |
           cd kernel-source
+          mkdir -p out
           
-          DEFCONFIG_PATH=$(find arch/arm64/configs -name "*cas_defconfig" | head -n 1)
-          if [ -z "$DEFCONFIG_PATH" ]; then
-            DEFCONFIG_PATH=$(find arch/arm64/configs -name "*sm8250-perf_defconfig" | head -n 1)
-          fi
+          # Pull your proven working configuration from the repository
+          cp ../stock_config out/.config
+          
+          echo "Injecting NetHunter configurations into your proven stock config..."
 
-          echo "Injecting Android 16 bypass and NetHunter configurations..."
-
-          cat << 'EOF' >> $DEFCONFIG_PATH
-          # --- Android 16 Security & Seccomp Bypass ---
-          CONFIG_SECCOMP=n
-          CONFIG_SECCOMP_FILTER=n
-          
-          # --- ReSukiSU & KPM Root Hooks ---
-          CONFIG_KSU=y
-          CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KPM=y
-          CONFIG_KPROBES=y
-          CONFIG_HAVE_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          
+          cat << 'EOF' >> out/.config
           # --- NetHunter Core ---
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
@@ -96,15 +82,10 @@ jobs:
           export SUBARCH=arm64
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
-          DEFCONFIG_NAME=$(basename $(find arch/arm64/configs -name "*cas_defconfig" | head -n 1))
-          if [ -z "$DEFCONFIG_NAME" ]; then
-            DEFCONFIG_NAME=$(basename $(find arch/arm64/configs -name "*sm8250-perf_defconfig" | head -n 1))
-          fi
-
-          echo "Building with defconfig: $DEFCONFIG_NAME"
-
-          make O=out ARCH=arm64 CC=clang $DEFCONFIG_NAME
+          # Safely apply the injected NetHunter config over your stock base
+          make O=out ARCH=arm64 CC=clang olddefconfig
           
+          # Execute build
           make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
