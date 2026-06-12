@@ -30,7 +30,7 @@ jobs:
         run: |
           git clone --depth=1 -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Inject NetHunter & Driver Defconfigs
+      - name: Inject NetHunter & Root Defconfigs
         run: |
           cd kernel-source
           
@@ -39,12 +39,24 @@ jobs:
             DEFCONFIG_PATH=$(find arch/arm64/configs -name "*sm8250-perf_defconfig" | head -n 1)
           fi
 
-          echo "Injecting ultimate NetHunter configs into: $DEFCONFIG_PATH"
+          echo "Injecting ultimate configs into: $DEFCONFIG_PATH"
 
           cat << 'EOF' >> $DEFCONFIG_PATH
+          # --- ReSukiSU & KPM Root Hooks ---
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KPM=y
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          
+          # --- NetHunter Core ---
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
           CONFIG_MAC80211_INJECTION=y
+          
+          # --- NetHunter USB / HID ---
           CONFIG_USB_CONFIGFS_F_HID=y
           CONFIG_USB_CONFIGFS_MASS_STORAGE=y
           CONFIG_USB_CONFIGFS_F_FS=y
@@ -52,6 +64,8 @@ jobs:
           CONFIG_HID_MAGICMOUSE=y
           CONFIG_HID_MICROSOFT=y
           CONFIG_HID_MULTITOUCH=y
+          
+          # --- NetHunter Wi-Fi Drivers ---
           CONFIG_WLAN_VENDOR_ATH=y
           CONFIG_ATH_COMMON=m
           CONFIG_ATH_CARDS=m
@@ -98,7 +112,6 @@ jobs:
           cd AnyKernel3
           rm -rf .git
           
-          # Force exact strings, bypassing case issues and preventing line deletion
           sed -i 's/kernel.string=.*/kernel.string=NetHunter-ReSukiSU-cas/g' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
           
