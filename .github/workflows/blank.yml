@@ -37,6 +37,14 @@ jobs:
           
           # Pull your proven working configuration from the repository
           cp ../stock_config out/.config
+
+          # --- FIX FOR CGROUP COMPILATION BUG ---
+          # Disable broken network priority cgroups inherited from the Infinity-X ROM
+          sed -i 's/CONFIG_CGROUP_NET_PRIO=y/# CONFIG_CGROUP_NET_PRIO is not set/g' out/.config
+          sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
+          
+          # Dynamically patch the broken kernel header to use the correct 4.19 macro
+          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
           echo "Injecting NetHunter configurations into your proven stock config..."
 
