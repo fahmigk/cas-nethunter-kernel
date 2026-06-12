@@ -30,7 +30,7 @@ jobs:
         run: |
           git clone --depth=1 -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Inject NetHunter Drivers into Stock Config
+      - name: Inject NetHunter & Root Drivers into Stock Config
         run: |
           cd kernel-source
           mkdir -p out
@@ -39,16 +39,22 @@ jobs:
           cp ../stock_config out/.config
 
           # --- FIX FOR CGROUP COMPILATION BUG ---
-          # Disable broken network priority cgroups inherited from the Infinity-X ROM
           sed -i 's/CONFIG_CGROUP_NET_PRIO=y/# CONFIG_CGROUP_NET_PRIO is not set/g' out/.config
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
-          
-          # Dynamically patch the broken kernel header to use the correct 4.19 macro
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
-          echo "Injecting NetHunter configurations into your proven stock config..."
+          echo "Injecting Root and NetHunter configurations into your proven stock config..."
 
           cat << 'EOF' >> out/.config
+          # --- ReSukiSU & KPM Root Hooks ---
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KPM=y
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+
           # --- NetHunter Core ---
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
