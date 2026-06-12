@@ -98,17 +98,19 @@ jobs:
           cd AnyKernel3
           rm -rf .git
           
-          # Force the exact partition path mapping utilized by Project Infinity-X
+          # Force exact strings, bypassing case issues and preventing line deletion
           sed -i 's/kernel.string=.*/kernel.string=NetHunter-ReSukiSU-cas/g' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
-          sed -i 's|block=.*|block=/dev/block/by-name/boot;|g' anykernel.sh
-          sed -i 's/is_slot_device=.*/is_slot_device=0;/g' anykernel.sh
+          
+          sed -i 's|block=[^;]*;|BLOCK=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+          sed -i 's|BLOCK=[^;]*;|BLOCK=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+          
+          sed -i 's/is_slot_device=[^;]*;/IS_SLOT_DEVICE=0;/g' anykernel.sh
+          sed -i 's/IS_SLOT_DEVICE=[^;]*;/IS_SLOT_DEVICE=0;/g' anykernel.sh
 
-          # Move compiled images to the packager
           cp ../kernel-source/out/arch/arm64/boot/Image* . || true
           cp ../kernel-source/out/arch/arm64/boot/dtb* . || true
 
-          # Create flashable zip
           zip -r9 ../NetHunter-Kernel-cas.zip *
 
       - name: Upload Kernel Artifact
