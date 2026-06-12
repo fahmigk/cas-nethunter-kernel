@@ -22,13 +22,10 @@ jobs:
             bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
             libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip
 
-      - name: Download Clang Toolchain
+      - name: Download Clang Toolchain (Proton Clang)
         run: |
-          mkdir -p clang
-          cd clang
-          wget -qO clang.tar.gz https://github.com/ZyC-X/zyc-clang/releases/download/v17.0.0-1/zyc-clang-17.tar.gz
-          tar -xf clang.tar.gz
-          rm clang.tar.gz
+          # Using Proton Clang: Highly stable and avoids broken release URLs
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
       - name: Clone Kernel Source (aptusitu branch)
         run: |
@@ -111,3 +108,4 @@ jobs:
         with:
           name: NetHunter-ReSukiSU-cas
           path: NetHunter-Kernel-cas.zip
+
