@@ -45,13 +45,10 @@ jobs:
           echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
           echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
 
-          # ---> THE FIX 2: POLYFILL MISSING SUSFS COMMANDS <---
-          # We downgrade the new SuSFS command to match your kernel's older naming convention natively.
+          # ---> THE FIX 2: POLYFILL MISSING SUSFS COMMANDS (Cleaned) <---
+          # We only swap the words now, removing the fallback that caused the redefinition crash.
           sed -i 's/CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS/CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS/g' drivers/kernelsu/supercall/dispatch.c || true
           sed -i 's/susfs_hide_sus_mnts_for_non_su_procs/susfs_hide_sus_mnts_for_all_procs/g' drivers/kernelsu/supercall/dispatch.c || true
-          
-          # We inject a dummy fallback definition directly into the C file just in case the older command is completely absent.
-          sed -i '1i #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS\n#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55555555\n#define susfs_hide_sus_mnts_for_all_procs() 0\n#endif\n' drivers/kernelsu/supercall/dispatch.c || true
 
       - name: Inject NetHunter & Root Drivers into Stock Config
         run: |
@@ -128,10 +125,11 @@ jobs:
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
           # Safely apply the injected NetHunter config over your stock base
-          make O=out ARCH=arm64 CC=clang olddefconfig
+          # 'yes ""' automatically presses Enter to bypass stall prompts
+          yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
           # Execute build
-          make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+          yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LLVM=1 LLVM_IAS=1 Image.gz-dtb
