@@ -24,26 +24,27 @@ jobs:
 
       - name: Download Clang Toolchain (Proton Clang)
         run: |
-          # Using Proton Clang: Highly stable and avoids broken release URLs
+          # Highly stable compiler for Snapdragon 865
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
       - name: Clone Kernel Source (aptusitu branch)
         run: |
-          # This targets the exact source containing your ReSukiSU and SuSFS patches
+          # Exact source containing ReSukiSU and SuSFS patches
           git clone --depth=1 -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
       - name: Inject NetHunter & Driver Defconfigs
         run: |
           cd kernel-source
+          
           # Dynamically locate the device configuration file
           DEFCONFIG_PATH=$(find arch/arm64/configs -name "*cas_defconfig" | head -n 1)
           if [ -z "$DEFCONFIG_PATH" ]; then
             DEFCONFIG_PATH=$(find arch/arm64/configs -name "*sm8250-perf_defconfig" | head -n 1)
           fi
 
-          echo "Injecting NetHunter configs into: $DEFCONFIG_PATH"
+          echo "Injecting ultimate NetHunter configs into: $DEFCONFIG_PATH"
 
-          # Append Kali NetHunter requirements
+          # Append Kali NetHunter requirements (IPC, USB, ATH, Ralink, Realtek)
           cat << 'EOF' >> $DEFCONFIG_PATH
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
@@ -55,10 +56,22 @@ jobs:
           CONFIG_HID_MAGICMOUSE=y
           CONFIG_HID_MICROSOFT=y
           CONFIG_HID_MULTITOUCH=y
+          CONFIG_WLAN_VENDOR_ATH=y
+          CONFIG_ATH_COMMON=m
+          CONFIG_ATH_CARDS=m
+          CONFIG_ATH9K=m
+          CONFIG_ATH9K_HTC=m
+          CONFIG_WLAN_VENDOR_RALINK=y
+          CONFIG_RT2X00=m
+          CONFIG_RT2800USB=m
+          CONFIG_WLAN_VENDOR_MEDIATEK=y
+          CONFIG_MT7601U=m
           CONFIG_WLAN_VENDOR_REALTEK=y
           CONFIG_RTL818X=m
           CONFIG_RTL8187=m
           CONFIG_RTL8188EU=m
+          CONFIG_RTL8192CU=m
+          CONFIG_RTL8XXXU=m
           EOF
 
       - name: Compile the Kernel
@@ -91,10 +104,11 @@ jobs:
           cd AnyKernel3
           rm -rf .git
           
-          # Target Xiaomi Mi 10 Ultra specific block and names
-          sed -i 's/kernel.string=.*/kernel.string=NetHunter-ReSukiSU-cas/' anykernel.sh
-          sed -i 's/device.name1=.*/device.name1=cas/' anykernel.sh
-          sed -i 's/block=.*/block=\/dev\/block\/bootdevice\/by-name\/boot/' anykernel.sh
+          # Force proper AnyKernel3 config for auto-detection in custom ROMs
+          sed -i 's/kernel.string=.*/kernel.string=NetHunter-ReSukiSU-cas/g' anykernel.sh
+          sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
+          sed -i 's|block=.*|block=auto;|g' anykernel.sh
+          sed -i 's/is_slot_device=.*/is_slot_device=auto;/g' anykernel.sh
 
           # Move compiled images to the packager
           cp ../kernel-source/out/arch/arm64/boot/Image* . || true
@@ -108,4 +122,3 @@ jobs:
         with:
           name: NetHunter-ReSukiSU-cas
           path: NetHunter-Kernel-cas.zip
-
