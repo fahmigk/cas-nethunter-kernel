@@ -26,45 +26,38 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone Kernel Source (aptusitu branch)
+      - name: Clone EXACT Working Kernel Source
         run: |
-          # Clone WITH submodules to get the perfectly patched native root engine
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
-
-      - name: Bypass Strict Inline Hook Formatting Check
-        run: |
+          # Full clone without --depth=1 so we download the entire repository history
+          git clone https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
           cd kernel-source
-          # The native inline hooks are perfect, but the Makefile's text check is too strict. We silence it so it compiles.
-          echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
-          echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
+          
+          # ---> THE MAGIC FIX <---
+          # Time-travel to the EXACT fingerprint of your working kernel!
+          git checkout afc406285284
+          
+          # Download the perfectly matching root submodules for this exact commit
+          git submodule update --init --recursive
 
-      - name: Inject NetHunter & INLINE Root Drivers
+      - name: Inject NetHunter Drivers
         run: |
           cd kernel-source
           mkdir -p out
           
-          # Pull your proven working configuration from the repository
+          # Use your proven stock_config
           cp ../stock_config out/.config
 
-          # --- FIX FOR CGROUP COMPILATION BUG ---
+          # Fix the Infinity-X cgroup compilation bug
           sed -i 's/CONFIG_CGROUP_NET_PRIO=y/# CONFIG_CGROUP_NET_PRIO is not set/g' out/.config
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
-          # Forcefully disable Manual Hook so it defaults to INLINE
-          sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
-          
-          echo "Injecting Root and NetHunter configurations..."
-
           cat << 'EOF' >> out/.config
-          # --- ReSukiSU Native INLINE Hooks ---
+          # Guarantee core KSU flags are active
           CONFIG_KSU=y
           CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
           CONFIG_KPM=y
-
+          
           # --- NetHunter Core ---
           CONFIG_SYSVIPC=y
           CONFIG_SYSVIPC_SYSCTL=y
@@ -107,7 +100,6 @@ jobs:
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
           # Safely apply the injected NetHunter config over the stock base
-          # 'yes ""' automatically bypasses any stall prompts
           yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
           # Execute build
