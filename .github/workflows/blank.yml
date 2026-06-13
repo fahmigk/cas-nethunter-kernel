@@ -36,7 +36,7 @@ jobs:
           echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
           echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
 
-      - name: Inject NetHunter & Root Drivers
+      - name: Inject NetHunter & Native KPM Root Drivers
         run: |
           cd kernel-source
           mkdir -p out
@@ -48,15 +48,19 @@ jobs:
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
+          # --- THE CRITICAL FIX: DESTROY MANUAL HOOK TO FORCE INLINE ---
+          sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
+          
           cat << 'EOF' >> out/.config
-          # --- GUARANTEE NATIVE SukiSU INLINE HOOKS ---
+          # --- GUARANTEE NATIVE SukiSU INLINE HOOKS (KPM) ---
           CONFIG_KSU=y
-          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KPM=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_KSTAT=y
-          CONFIG_KPM=y
 
           # --- NetHunter Core ---
           CONFIG_SYSVIPC=y
