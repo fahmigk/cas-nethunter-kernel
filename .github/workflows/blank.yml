@@ -36,7 +36,7 @@ jobs:
           echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
           echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
 
-      - name: Inject NetHunter & INLINE Root Drivers
+      - name: Inject NetHunter & Root Drivers
         run: |
           cd kernel-source
           mkdir -p out
@@ -48,12 +48,10 @@ jobs:
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
-          # Forcefully disable Manual Hook so it defaults to INLINE
-          sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
-          
           cat << 'EOF' >> out/.config
-          # --- ReSukiSU Native INLINE Hooks ---
+          # --- GUARANTEE NATIVE SukiSU INLINE HOOKS ---
           CONFIG_KSU=y
+          CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -108,24 +106,17 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LLVM=1 LLVM_IAS=1 Image.gz-dtb
 
-      - name: Patch boot.img directly (No AnyKernel3)
+      - name: Patch boot.img directly
         run: |
-          # Download official Magisk to extract the magiskboot tool
           wget https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
           unzip -q Magisk-v27.0.apk lib/x86_64/libmagiskboot.so
           mv lib/x86_64/libmagiskboot.so magiskboot
           chmod +x magiskboot
 
-          # Unzip your uploaded boot.zip to get the 128MB boot.img
           unzip -q boot.zip
-
-          # Unpack the Infinity-X boot.img
           ./magiskboot unpack boot.img
 
-          # Replace the stock kernel engine with our freshly compiled NetHunter+ReSukiSU engine
           cp kernel-source/out/arch/arm64/boot/Image kernel
-
-          # Repack it into a brand new, flashable boot image
           ./magiskboot repack boot.img nethunter-boot.img
 
       - name: Upload Final Image Artifact
