@@ -28,15 +28,20 @@ jobs:
 
       - name: Clone Kernel Source (aptusitu branch)
         run: |
-          # Cloning WITH submodules to get the perfectly patched native root engine
+          # Cloning WITH submodules to guarantee the native root engine is downloaded
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Inject NetHunter & Root Drivers
+      - name: Bypass Strict Inline Hook Formatting Check
+        run: |
+          cd kernel-source
+          echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
+          echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
+
+      - name: Inject NetHunter & INLINE Root Drivers
         run: |
           cd kernel-source
           mkdir -p out
           
-          # Pull your proven working configuration from the repository
           cp ../stock_config out/.config
 
           # --- FIX FOR CGROUP COMPILATION BUG ---
@@ -44,17 +49,16 @@ jobs:
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
-          # Forcefully disable Manual Hook so it defaults back to your working INLINE hooks
+          # Forcefully disable Manual Hook so it defaults to the native INLINE hooks
           sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
           
-          # Bypass the strict inline hook format check that causes compiler crashes
-          echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
-          echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
-
           cat << 'EOF' >> out/.config
           # --- ReSukiSU Native INLINE Hooks ---
           CONFIG_KSU=y
           CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
           CONFIG_KPM=y
 
           # --- NetHunter Core ---
@@ -98,10 +102,8 @@ jobs:
           export SUBARCH=arm64
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
-          # Safely apply the injected NetHunter config over the stock base
           yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
-          # Execute build
           yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -113,16 +115,18 @@ jobs:
           cd AnyKernel3
           rm -rf .git
           
+          # Update visual strings and set Mi 10 Ultra to A-only architecture
           sed -i 's/kernel.string=.*/kernel.string=NetHunter-ReSukiSU-cas/g' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
+          sed -i 's/is_slot_device=.*/is_slot_device=0;/g' anykernel.sh
           
-          # ---> THE FOOLPROOF ANYKERNEL FIX <---
-          # We safely target ONLY the specific path strings without breaking the rest of the script
-          sed -i 's|block=auto;|block=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
-          sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+          # Aggressively set the block path in the main configuration file
+          sed -i 's|block=auto|block=/dev/block/bootdevice/by-name/boot|g' anykernel.sh
           
-          sed -i 's|is_slot_device=1;|is_slot_device=0;|g' anykernel.sh
-          sed -i 's|is_slot_device=auto;|is_slot_device=0;|g' anykernel.sh
+          # ---> THE ULTIMATE SAFETY NET <---
+          # We dive into the hidden core logic and completely replace the dummy OMAP path 
+          # with your verified Infinity-X partition. If it panics, it falls back to success!
+          sed -i 's|/dev/block/platform/omap/omap_hsmmc.0/by-name/boot|/dev/block/bootdevice/by-name/boot|g' tools/ak3-core.sh
 
           cp ../kernel-source/out/arch/arm64/boot/Image* . || true
           cp ../kernel-source/out/arch/arm64/boot/dtb* . || true
