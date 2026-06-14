@@ -49,7 +49,6 @@ jobs:
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
           # --- DISABLE CONFLICTING GENERIC DRIVERS ---
-          # We disable the generic in-tree driver so it doesn't fight our out-of-tree NetHunter driver
           sed -i 's/CONFIG_R8188EU=m/# CONFIG_R8188EU is not set/g' out/.config
           sed -i 's/CONFIG_R8188EU=y/# CONFIG_R8188EU is not set/g' out/.config
           
@@ -74,13 +73,11 @@ jobs:
           CONFIG_USB_SUPPORT=y
           CONFIG_NETDEVICES=y
           CONFIG_WIRELESS_EXT=y
-          # Core subsystems set to 'y' so the native Snapdragon driver links flawlessly
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
           CONFIG_MAC80211_INJECTION=y
           CONFIG_BT=y
           
-          # Keep the secondary NetHunter hardware drivers as modules
           CONFIG_ATH9K_HTC=m
           CONFIG_MT76_USB=m
           CONFIG_BT_HCIBTUSB=m
@@ -103,13 +100,19 @@ jobs:
 
       - name: Compile External RTL8188EUS Driver Module (TP-Link WN722N V2)
         run: |
-          # Use the stable v5.3.9 branch exactly as your guide requested
           git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
           cd rtl8188eus
           
           export PATH="$(pwd)/../clang/bin:$PATH"
+          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
           
-          make -C ../kernel-source/out M=$(pwd) ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules
+          # ---> THE CRITICAL MAKEFILE FIX <---
+          # Force the Realtek Makefile to target Android ARM64 instead of x86 PC
+          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
+          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
+          
+          # Realtek Makefiles require the KSRC variable to find your freshly built kernel headers
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y
 
       - name: Patch boot.img directly & Package Artifacts
         run: |
@@ -127,8 +130,8 @@ jobs:
           mkdir -p final-package
           mv nethunter-boot.img final-package/
           
-          # Copy the new 8188eu driver into the final folder
-          mv rtl8188eus/*.ko final-package/ || true
+          # Removed the safety net. If the .ko file doesn't exist, the build will strictly fail.
+          mv rtl8188eus/*.ko final-package/
 
       - name: Upload Final Package
         uses: actions/upload-artifact@v4
