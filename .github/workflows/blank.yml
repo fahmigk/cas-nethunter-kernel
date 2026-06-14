@@ -26,21 +26,17 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone Kernel Source (aptusitu branch)
+      - name: Clone Kernel Source (CoolestEnoch)
         run: |
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+          # Attempts to clone the android-16 branch as requested, falls back to default if the branch name differs
+          git clone --depth=1 -b android-16 https://github.com/CoolestEnoch/kernel-su-xiaomi-cas.git kernel-source || git clone --depth=1 https://github.com/CoolestEnoch/kernel-su-xiaomi-cas.git kernel-source
 
-      - name: Bypass Strict Inline Hook Formatting Check
-        run: |
-          cd kernel-source
-          echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
-          echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
-
-      - name: Inject NetHunter & Native KPM Root Drivers
+      - name: Configure Kernel & Inject NetHunter Modules
         run: |
           cd kernel-source
           mkdir -p out
           
+          # Pull the proven stock_config from the repository
           cp ../stock_config out/.config
 
           # --- FIX FOR CGROUP COMPILATION BUG ---
@@ -48,11 +44,10 @@ jobs:
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
-          # --- THE CRITICAL FIX: DESTROY MANUAL HOOK TO FORCE INLINE ---
-          sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
-          
+          echo "Injecting NetHunter driver configurations..."
+
           cat << 'EOF' >> out/.config
-          # --- GUARANTEE NATIVE SukiSU INLINE HOOKS (KPM) ---
+          # --- GUARANTEE NATIVE ROOT HOOKS ---
           CONFIG_KSU=y
           CONFIG_KPM=y
           CONFIG_KALLSYMS=y
@@ -62,40 +57,21 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_KSTAT=y
 
-          # --- NetHunter Core ---
-          CONFIG_SYSVIPC=y
-          CONFIG_SYSVIPC_SYSCTL=y
+          # --- NetHunter Core Network & USB Configs ---
+          CONFIG_USB=y
+          CONFIG_USB_SUPPORT=y
+          CONFIG_NETDEVICES=y
+          CONFIG_WIRELESS_EXT=y
+          CONFIG_CFG80211=m
+          CONFIG_MAC80211=m
           CONFIG_MAC80211_INJECTION=y
-          
-          # --- NetHunter USB / HID ---
-          CONFIG_USB_CONFIGFS_F_HID=y
-          CONFIG_USB_CONFIGFS_MASS_STORAGE=y
-          CONFIG_USB_CONFIGFS_F_FS=y
-          CONFIG_HID_APPLE=y
-          CONFIG_HID_MAGICMOUSE=y
-          CONFIG_HID_MICROSOFT=y
-          CONFIG_HID_MULTITOUCH=y
-          
-          # --- NetHunter Wi-Fi Drivers ---
-          CONFIG_WLAN_VENDOR_ATH=y
-          CONFIG_ATH_COMMON=m
-          CONFIG_ATH_CARDS=m
-          CONFIG_ATH9K=m
           CONFIG_ATH9K_HTC=m
-          CONFIG_WLAN_VENDOR_RALINK=y
-          CONFIG_RT2X00=m
-          CONFIG_RT2800USB=m
-          CONFIG_WLAN_VENDOR_MEDIATEK=y
-          CONFIG_MT7601U=m
-          CONFIG_WLAN_VENDOR_REALTEK=y
-          CONFIG_RTL818X=m
-          CONFIG_RTL8187=m
-          CONFIG_RTL8188EU=m
-          CONFIG_RTL8192CU=m
-          CONFIG_RTL8XXXU=m
+          CONFIG_MT76_USB=m
+          CONFIG_BT=m
+          CONFIG_BT_HCIBTUSB=m
           EOF
 
-      - name: Compile the Kernel
+      - name: Compile the Core Kernel
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
@@ -110,21 +86,40 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LLVM=1 LLVM_IAS=1 Image.gz-dtb
 
-      - name: Patch boot.img directly
+      - name: Compile External RTL8812AU Driver Module
         run: |
+          # Download the hak5 branch that supports 4.19 architecture
+          git clone -b v5.6.4.2 https://github.com/hak5/rtl8812au.git rtl8812au
+          cd rtl8812au
+          
+          export PATH="$(pwd)/../clang/bin:$PATH"
+          
+          # Compile the module against the freshly built kernel headers in the /out directory
+          make -C ../kernel-source/out M=$(pwd) ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules
+
+      - name: Patch boot.img & Package Artifacts
+        run: |
+          # 1. Setup magiskboot
           wget https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
           unzip -q Magisk-v27.0.apk lib/x86_64/libmagiskboot.so
           mv lib/x86_64/libmagiskboot.so magiskboot
           chmod +x magiskboot
 
+          # 2. Unpack the uploaded boot.img
           unzip -q boot.zip
           ./magiskboot unpack boot.img
 
+          # 3. Replace the engine and repack
           cp kernel-source/out/arch/arm64/boot/Image kernel
           ./magiskboot repack boot.img nethunter-boot.img
 
-      - name: Upload Final Image Artifact
+          # 4. Group the flashable image and the compiled modules into one output folder
+          mkdir -p final-package
+          mv nethunter-boot.img final-package/
+          mv rtl8812au/*.ko final-package/ || true
+
+      - name: Upload Final Package
         uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-ReSukiSU-cas-IMG
-          path: nethunter-boot.img
+          name: NetHunter-ReSukiSU-Package
+          path: final-package/*
