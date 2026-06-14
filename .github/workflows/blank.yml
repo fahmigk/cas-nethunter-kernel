@@ -110,15 +110,15 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           
-          # ---> THE CRITICAL CFG80211 FIX <---
-          # Forcefully enable the CFG80211 subsystem so the wiphy_net functions compile properly
-          sed -i 's/CONFIG_IOCTL_CFG80211 = n/CONFIG_IOCTL_CFG80211 = y/g' Makefile
-          
           # Remove strict compiler warning traps that cause crashes
           sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
           
-          # Execute the build with all platform and endianness overrides hardcoded in the command
-          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y CONFIG_IOCTL_CFG80211=y USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -Wno-error -Wno-undef"
+          # ---> THE ULTIMATE MACRO FIX <---
+          # By injecting -DCONFIG_IOCTL_CFG80211=1 directly into the C-compiler flags, 
+          # we physically force the driver to acknowledge the core Wi-Fi structures.
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out \
+            CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
+            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
 
       - name: Patch boot.img directly & Package Artifacts
         run: |
