@@ -69,7 +69,7 @@ jobs:
           CONFIG_USB_SUPPORT=y
           CONFIG_NETDEVICES=y
           CONFIG_WIRELESS_EXT=y
-          # CRITICAL FIX: Set core subsystems to 'y' so the native Snapdragon driver can link to them!
+          # Core subsystems set to 'y' so the native Snapdragon driver links flawlessly
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
           CONFIG_MAC80211_INJECTION=y
@@ -98,7 +98,8 @@ jobs:
 
       - name: Compile External RTL8812AU Driver Module
         run: |
-          git clone -b v5.6.4.2 https://github.com/hak5/rtl8812au.git rtl8812au
+          # CRITICAL FIX: Use the official, actively maintained aircrack-ng repository
+          git clone -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au.git rtl8812au
           cd rtl8812au
           
           export PATH="$(pwd)/../clang/bin:$PATH"
