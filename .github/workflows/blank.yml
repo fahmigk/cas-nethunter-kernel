@@ -28,7 +28,6 @@ jobs:
 
       - name: Clone EXACT Working Kernel Source (Searchur)
         run: |
-          # Reverting to the proven Searchur repository that we know contains the Makefile!
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
       - name: Bypass Strict Inline Hook Formatting Check
@@ -70,12 +69,15 @@ jobs:
           CONFIG_USB_SUPPORT=y
           CONFIG_NETDEVICES=y
           CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=m
-          CONFIG_MAC80211=m
+          # CRITICAL FIX: Set core subsystems to 'y' so the native Snapdragon driver can link to them!
+          CONFIG_CFG80211=y
+          CONFIG_MAC80211=y
           CONFIG_MAC80211_INJECTION=y
+          CONFIG_BT=y
+          
+          # Keep the actual NetHunter hardware drivers as modules
           CONFIG_ATH9K_HTC=m
           CONFIG_MT76_USB=m
-          CONFIG_BT=m
           CONFIG_BT_HCIBTUSB=m
           EOF
 
@@ -96,32 +98,26 @@ jobs:
 
       - name: Compile External RTL8812AU Driver Module
         run: |
-          # Download the hak5 branch that supports 4.19 architecture
           git clone -b v5.6.4.2 https://github.com/hak5/rtl8812au.git rtl8812au
           cd rtl8812au
           
           export PATH="$(pwd)/../clang/bin:$PATH"
           
-          # Compile the module against the freshly built kernel headers in the /out directory
           make -C ../kernel-source/out M=$(pwd) ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules
 
       - name: Patch boot.img directly & Package Artifacts
         run: |
-          # 1. Setup magiskboot
           wget https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
           unzip -q Magisk-v27.0.apk lib/x86_64/libmagiskboot.so
           mv lib/x86_64/libmagiskboot.so magiskboot
           chmod +x magiskboot
 
-          # 2. Unpack the uploaded boot.img
           unzip -q boot.zip
           ./magiskboot unpack boot.img
 
-          # 3. Replace the engine and repack
           cp kernel-source/out/arch/arm64/boot/Image kernel
           ./magiskboot repack boot.img nethunter-boot.img
 
-          # 4. Group the flashable image and the compiled modules into one output folder
           mkdir -p final-package
           mv nethunter-boot.img final-package/
           mv rtl8812au/*.ko final-package/ || true
