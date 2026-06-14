@@ -48,6 +48,11 @@ jobs:
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
+          # --- DISABLE CONFLICTING GENERIC DRIVERS ---
+          # We disable the generic in-tree driver so it doesn't fight our out-of-tree NetHunter driver
+          sed -i 's/CONFIG_R8188EU=m/# CONFIG_R8188EU is not set/g' out/.config
+          sed -i 's/CONFIG_R8188EU=y/# CONFIG_R8188EU is not set/g' out/.config
+          
           # --- GUARANTEE INLINE HOOKS ---
           sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
           
@@ -75,7 +80,7 @@ jobs:
           CONFIG_MAC80211_INJECTION=y
           CONFIG_BT=y
           
-          # Keep the actual NetHunter hardware drivers as modules
+          # Keep the secondary NetHunter hardware drivers as modules
           CONFIG_ATH9K_HTC=m
           CONFIG_MT76_USB=m
           CONFIG_BT_HCIBTUSB=m
@@ -96,11 +101,11 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LLVM=1 LLVM_IAS=1 Image.gz-dtb
 
-      - name: Compile External RTL8812AU Driver Module
+      - name: Compile External RTL8188EUS Driver Module (TP-Link WN722N V2)
         run: |
-          # CRITICAL FIX: Use the official, actively maintained aircrack-ng repository
-          git clone -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au.git rtl8812au
-          cd rtl8812au
+          # Use the stable v5.3.9 branch exactly as your guide requested
+          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
+          cd rtl8188eus
           
           export PATH="$(pwd)/../clang/bin:$PATH"
           
@@ -121,7 +126,9 @@ jobs:
 
           mkdir -p final-package
           mv nethunter-boot.img final-package/
-          mv rtl8812au/*.ko final-package/ || true
+          
+          # Copy the new 8188eu driver into the final folder
+          mv rtl8188eus/*.ko final-package/ || true
 
       - name: Upload Final Package
         uses: actions/upload-artifact@v4
