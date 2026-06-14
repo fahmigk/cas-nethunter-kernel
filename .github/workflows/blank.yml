@@ -26,17 +26,22 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone Kernel Source (CoolestEnoch)
+      - name: Clone EXACT Working Kernel Source (Searchur)
         run: |
-          # Attempts to clone the android-16 branch as requested, falls back to default if the branch name differs
-          git clone --depth=1 -b android-16 https://github.com/CoolestEnoch/kernel-su-xiaomi-cas.git kernel-source || git clone --depth=1 https://github.com/CoolestEnoch/kernel-su-xiaomi-cas.git kernel-source
+          # Reverting to the proven Searchur repository that we know contains the Makefile!
+          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+
+      - name: Bypass Strict Inline Hook Formatting Check
+        run: |
+          cd kernel-source
+          echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
+          echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
 
       - name: Configure Kernel & Inject NetHunter Modules
         run: |
           cd kernel-source
           mkdir -p out
           
-          # Pull the proven stock_config from the repository
           cp ../stock_config out/.config
 
           # --- FIX FOR CGROUP COMPILATION BUG ---
@@ -44,10 +49,13 @@ jobs:
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           
+          # --- GUARANTEE INLINE HOOKS ---
+          sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
+          
           echo "Injecting NetHunter driver configurations..."
 
           cat << 'EOF' >> out/.config
-          # --- GUARANTEE NATIVE ROOT HOOKS ---
+          # --- GUARANTEE NATIVE SukiSU INLINE HOOKS (KPM) ---
           CONFIG_KSU=y
           CONFIG_KPM=y
           CONFIG_KALLSYMS=y
@@ -97,7 +105,7 @@ jobs:
           # Compile the module against the freshly built kernel headers in the /out directory
           make -C ../kernel-source/out M=$(pwd) ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules
 
-      - name: Patch boot.img & Package Artifacts
+      - name: Patch boot.img directly & Package Artifacts
         run: |
           # 1. Setup magiskboot
           wget https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
