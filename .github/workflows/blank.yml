@@ -62,19 +62,17 @@ jobs:
             echo "⚠️ Added CONFIG_KSU=y"
           fi
           
-          # Add RTL8188EUS as BUILT-IN (not module)
-          cat >> arch/arm64/configs/cas_defconfig << 'EOF'
-
-# NetHunter - RTL8188EUS for TL-WN722N V2
-CONFIG_RTL8188EUS=y
-CONFIG_USB=y
-CONFIG_USB_SUPPORT=y
-CONFIG_CFG80211=y
-CONFIG_MAC80211=y
-CONFIG_WIRELESS_EXT=y
-CONFIG_NETDEVICES=y
-CONFIG_WLAN=y
-EOF
+          # Add RTL8188EUS as BUILT-IN (not module) - using echo instead of heredoc
+          echo "" >> arch/arm64/configs/cas_defconfig
+          echo "# NetHunter - RTL8188EUS for TL-WN722N V2" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_RTL8188EUS=y" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_USB=y" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_USB_SUPPORT=y" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_CFG80211=y" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_MAC80211=y" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_WIRELESS_EXT=y" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_NETDEVICES=y" >> arch/arm64/configs/cas_defconfig
+          echo "CONFIG_WLAN=y" >> arch/arm64/configs/cas_defconfig
           
           echo "✅ Defconfig updated with RTL8188EUS support"
 
