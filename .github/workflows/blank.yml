@@ -1,4 +1,4 @@
-name: Build Mi10Ultra Kernel with RTL8188EUS (ReSukisu Built-in)
+name: Build Mi10Ultra Kernel with RTL8188EUS
 
 on:
   workflow_dispatch:
@@ -16,10 +16,8 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y \
-            git python3 bison flex libssl-dev libelf-dev bc zip unzip \
-            curl wget cpio rsync build-essential gcc-aarch64-linux-gnu \
-            clang lld device-tree-compiler
+          sudo apt-get update
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler
 
       - name: Download MagiskBoot
         run: |
@@ -29,42 +27,32 @@ jobs:
       - name: Extract boot.zip
         run: |
           unzip -q boot.zip -d boot_extracted
-          echo "✅ Extracted boot.zip:"
+          echo "Extracted boot.zip:"
           ls -lh boot_extracted/
 
-      - name: Clone Kernel Source (Match commit 06285284)
+      - name: Clone Kernel Source
         run: |
-          # Try CoolestEnoch first (has ReSukisu built-in)
           git clone https://github.com/CoolestEnoch/kernel-su-xiaomi-cas.git kernel
           cd kernel
-          
-          # Checkout exact commit if exists
-          if git rev-parse --verify --quiet ${KERNEL_COMMIT}^{commit}; then
-            git checkout ${KERNEL_COMMIT}
-            echo "✅ Checked out commit ${KERNEL_COMMIT}"
+          if git rev-parse --verify --quiet 06285284^{commit}; then
+            git checkout 06285284
+            echo "Checked out commit 06285284"
           else
-            echo "⚠️ Commit ${KERNEL_COMMIT} not found, using latest android-16 branch"
+            echo "Commit not found, using latest"
             git checkout android-16
           fi
-          
-          # Verify kernel version in Makefile          echo "Kernel version in source:"
           grep "VERSION\|PATCHLEVEL\|SUBLEVEL\|EXTRAVERSION" Makefile | head -4
 
-      - name: Configure Kernel for RTL8188EUS + Preserve ReSukisu
+      - name: Configure Kernel
         run: |
           cd kernel
-          
-          # Check if ReSukisu/KernelSU is already enabled
           if grep -q "CONFIG_KSU=y" arch/arm64/configs/cas_defconfig; then
-            echo "✅ ReSukisu already enabled in defconfig"
-          else
+            echo "ReSukisu already enabled"          else
             echo "CONFIG_KSU=y" >> arch/arm64/configs/cas_defconfig
-            echo "⚠️ Added CONFIG_KSU=y"
+            echo "Added CONFIG_KSU=y"
           fi
-          
-          # Add RTL8188EUS as BUILT-IN (not module) - using echo instead of heredoc
           echo "" >> arch/arm64/configs/cas_defconfig
-          echo "# NetHunter - RTL8188EUS for TL-WN722N V2" >> arch/arm64/configs/cas_defconfig
+          echo "# NetHunter RTL8188EUS" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_RTL8188EUS=y" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_USB=y" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_USB_SUPPORT=y" >> arch/arm64/configs/cas_defconfig
@@ -73,95 +61,53 @@ jobs:
           echo "CONFIG_WIRELESS_EXT=y" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_NETDEVICES=y" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_WLAN=y" >> arch/arm64/configs/cas_defconfig
-          
-          echo "✅ Defconfig updated with RTL8188EUS support"
+          echo "Defconfig updated"
 
       - name: Build Kernel
         run: |
           cd kernel
-          
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          
-          # Clean previous builds
           make O=out clean
-          
-          # Generate config
           make O=out cas_defconfig
-          
-          # Show config summary
-          echo "=== Kernel Config Summary ==="
+          echo "=== Config Summary ==="
           grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
-                    # Build
           make -j$(nproc) O=out Image.gz dtbo.img
-          
-          echo "✅ Kernel build complete!"
+          echo "Kernel build complete"
           ls -lh out/arch/arm64/boot/
 
-      - name: Repack boot.img (Preserve Original Structure)
+      - name: Repack boot.img
         run: |
           mkdir -p out/boot
           cp boot_extracted/boot.img out/boot/original-boot.img
           cd out/boot
-          
-          # Unpack original boot.img
           ../../magiskboot-linux unpack original-boot.img
-          
-          # Replace kernel with new one
-          # Check what the original kernel is named
           if [ -f split_img/zImage ]; then
             cp ../kernel/out/arch/arm64/boot/Image.gz split_img/zImage
-            echo "✅ Replaced zImage"
+            echo "Replaced zImage"
           elif [ -f split_img/Image ]; then
             cp ../kernel/out/arch/arm64/boot/Image.gz split_img/Image
-            echo "✅ Replaced Image"
+            echo "Replaced Image"
           else
-            # Create Image from Image.gz if needed
             cp ../kernel/out/arch/arm64/boot/Image.gz .
-            echo "✅ Added Image.gz"
+            echo "Added Image.gz"
           fi
-          
-          # Repack
           ../../magiskboot-linux repack original-boot.img new-boot.img
-          
-          echo "✅ Repacked boot.img:"
+          echo "Repacked boot.img:"
           ls -lh new-boot.img
-
       - name: Create Flashable ZIP
         run: |
           mkdir -p flashable/META-INF/com/google/android
           mkdir -p flashable/system/lib/modules/4.19.325-cip131-st15-aptusitu-perf-gafc406285284
-          
-          # Copy new boot.img
           cp out/boot/new-boot.img flashable/boot.img
-          
-          # Create update-binary
-          cat > flashable/META-INF/com/google/android/update-binary << 'UPDATER'
-#!/sbin/sh
-# NetHunter Kernel for Mi 10 Ultra
-ui_print "Installing NetHunter Kernel..."
-ui_print "Kernel: 4.19.325 with RTL8188EUS"
-ui_print "ReSukiSU: Preserved"
-# Flash boot image
-BLOCK=/dev/block/bootdevice/by-name/boot
-dd if=$TMPDIR/boot.img of=$BLOCK
-
-ui_print "✅ Installation complete!"
-ui_print "⚠️ Reboot now!"
-UPDATER
-          
+          printf '#!/sbin/sh\nui_print "Installing NetHunter Kernel..."\nui_print "Kernel: 4.19.325 with RTL8188EUS"\nui_print "ReSukiSU: Preserved"\nBLOCK=/dev/block/bootdevice/by-name/boot\ndd if=$TMPDIR/boot.img of=$BLOCK\nui_print "Installation complete!"\nui_print "Reboot now!"\n' > flashable/META-INF/com/google/android/update-binary
           chmod +x flashable/META-INF/com/google/android/update-binary
-          
-          # Create updater-script
           echo '#MAGISK' > flashable/META-INF/com/google/android/updater-script
-          
-          # Create flash-zip
           cd flashable
           zip -r9 ../NetHunter-Kernel-Mi10Ultra-A16.zip .
-          
-          echo "✅ Created flashable ZIP:"
+          echo "Created flashable ZIP:"
           ls -lh ../NetHunter-Kernel-Mi10Ultra-A16.zip
 
       - name: Upload Artifacts
