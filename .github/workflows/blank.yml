@@ -1,4 +1,4 @@
-name: Build TP-Link WN722N Driver Only
+name: Build NetHunter Kernel (Built-in Driver)
 
 on:
   workflow_dispatch:
@@ -30,14 +30,32 @@ jobs:
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
+      - name: Inject Realtek Driver into Kernel Source Tree
+        run: |
+          cd kernel-source
+          # Clone the NetHunter driver straight into the kernel's wireless drivers folder
+          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git drivers/net/wireless/rtl8188eus
+          
+          # Force the driver to compile as a built-in part of the kernel matrix
+          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' drivers/net/wireless/rtl8188eus/Makefile
+          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' drivers/net/wireless/rtl8188eus/Makefile
+          sed -i 's/CONFIG_IOCTL_CFG80211 = n/CONFIG_IOCTL_CFG80211 = y/g' drivers/net/wireless/rtl8188eus/Makefile
+          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' drivers/net/wireless/rtl8188eus/Makefile
+          
+          # Apply the API backport bypass patches to the driver files inside the tree
+          sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed/g' drivers/net/wireless/rtl8188eus/os_dep/linux/ioctl_cfg80211.c
+          sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed/g' drivers/net/wireless/rtl8188eus/os_dep/linux/ioctl_cfg80211.c
+
+          # Link the driver to the kernel's master build configuration
+          echo "obj-y += rtl8188eus/" >> drivers/net/wireless/Makefile
+
       - name: Configure Kernel & Inject NetHunter Core
         run: |
           cd kernel-source
           mkdir -p out
-          
           cp ../stock_config out/.config
 
-          # Disable automatic Git hash appending so we can manually lock the signature
+          # Disable automatic Git hash appending to prevent signature corruption
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
@@ -49,55 +67,50 @@ jobs:
           # Force localversion signature matching
           sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
 
-          # Enable core networking dependencies
+          # Configure driver dependencies as completely built-in flags (=y)
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
+          CONFIG_MAC80211_INJECTION=y
+          CONFIG_USB=y
+          CONFIG_USB_SUPPORT=y
+          CONFIG_NETDEVICES=y
           EOF
 
-      - name: Compile Full Kernel to Generate Module.symvers
+      - name: Compile the Complete Kernel Architecture
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          export KBUILD_COMPILER_STRING="Clang 12.0.0"
 
           yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
-          # Compiling the full Image generates the exact Module.symvers layout map
           yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LLVM=1 LLVM_IAS=1 Image.gz-dtb
 
-      - name: Compile External RTL8188EUS Driver Module (TP-Link WN722N V2)
+      - name: Patch boot.img directly & Package Artifacts
         run: |
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
-          cd rtl8188eus
-          
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-          
-          # Force Android ARM64 platform
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          
-          # Remove strict compiler warning traps
-          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
-          
-          # The API Backport Bypass (Removes the missing association functions)
-          sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed for nethunter bypass/g' os_dep/linux/ioctl_cfg80211.c
-          sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed for nethunter bypass/g' os_dep/linux/ioctl_cfg80211.c
-          
-          # Execute the build utilizing the newly generated Module.symvers symbol file
-          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out \
-            CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
+          wget https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
+          unzip -q Magisk-v27.0.apk lib/x86_64/libmagiskboot.so
+          mv lib/x86_64/libmagiskboot.so magiskboot
+          chmod +x magiskboot
 
-      - name: Upload Wi-Fi Driver Artifact
+          unzip -q boot.zip
+          ./magiskboot unpack boot.img
+
+          cp kernel-source/out/arch/arm64/boot/Image kernel
+          ./magiskboot repack boot.img nethunter-boot.img
+
+          mkdir -p final-package
+          mv nethunter-boot.img final-package/
+
+      - name: Upload Final Package
         uses: actions/upload-artifact@v4
         with:
-          name: TP-Link-WN722N-Driver
-          path: rtl8188eus/8188eu.ko
+          name: NetHunter-BuiltIn-Kernel
+          path: final-package/*
