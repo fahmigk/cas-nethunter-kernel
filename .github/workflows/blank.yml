@@ -42,9 +42,8 @@ jobs:
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
           # ---> THE SPOOFING FIX <---
-          # Force the exact signature of your currently working ReSukiSU device
+          # We only inject the signature into the main config file to avoid duplication
           sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
-          echo "-cip131-st15-aptusitu-perf-gafc406285284" > localversion
 
           # Enable core networking to satisfy the driver dependencies
           cat << 'EOF' >> out/.config
