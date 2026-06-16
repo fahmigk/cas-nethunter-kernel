@@ -1,4 +1,4 @@
-name: Build NetHunter Kernel (Built-in Driver)
+name: Build Perfect 8188eu Driver (No Flashing)
 
 on:
   workflow_dispatch:
@@ -26,83 +26,75 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone EXACT Working Kernel Source (Searchur)
+      - name: Clone the Exact Kernel Source (Searchur - aptusitu)
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Inject Realtek Driver into Kernel Source Tree
-        run: |
-          cd kernel-source
-          # Clone the NetHunter driver straight into the kernel's wireless drivers folder
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git drivers/net/wireless/rtl8188eus
-          
-          # Force the driver to compile as a built-in part of the kernel matrix
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' drivers/net/wireless/rtl8188eus/Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' drivers/net/wireless/rtl8188eus/Makefile
-          sed -i 's/CONFIG_IOCTL_CFG80211 = n/CONFIG_IOCTL_CFG80211 = y/g' drivers/net/wireless/rtl8188eus/Makefile
-          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' drivers/net/wireless/rtl8188eus/Makefile
-          
-          # Apply the API backport bypass patches to the driver files inside the tree
-          sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed/g' drivers/net/wireless/rtl8188eus/os_dep/linux/ioctl_cfg80211.c
-          sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed/g' drivers/net/wireless/rtl8188eus/os_dep/linux/ioctl_cfg80211.c
-
-          # Link the driver to the kernel's master build configuration
-          echo "obj-y += rtl8188eus/" >> drivers/net/wireless/Makefile
-
-      - name: Configure Kernel & Inject NetHunter Core
+      - name: Configure Kernel with Live DroidSpaces/ReSukiSU Config
         run: |
           cd kernel-source
           mkdir -p out
+          
+          # Copy your live, extracted configuration
           cp ../stock_config out/.config
 
-          # Disable automatic Git hash appending to prevent signature corruption
+          # Disable automatic Git hash appending
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
-          # Fix for Cgroup compilation bug
-          sed -i 's/CONFIG_CGROUP_NET_PRIO=y/# CONFIG_CGROUP_NET_PRIO is not set/g' out/.config
-          sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
-
-          # Force localversion signature matching
+          # Force exact signature spoofing
           sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
 
-          # Configure driver dependencies as completely built-in flags (=y)
+          # Ensure module dependencies are met
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=y
-          CONFIG_MAC80211=y
-          CONFIG_MAC80211_INJECTION=y
-          CONFIG_USB=y
-          CONFIG_USB_SUPPORT=y
-          CONFIG_NETDEVICES=y
+          CONFIG_CFG80211=m
+          CONFIG_MAC80211=m
           EOF
 
-      - name: Compile the Complete Kernel Architecture
+      - name: Compile Core to Generate the Exact Module.symvers Map
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
-          export KBUILD_COMPILER_STRING="Clang 12.0.0"
+          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
           yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
+          # We compile the Image just to force Linux to generate the Module.symvers file
           yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 LLVM_IAS=1 Image.gz-dtb
+            LLVM=1 LLVM_IAS=1 Image.gz-dtb modules
 
-      - name: Patch boot.img directly & Package Artifacts
+      - name: Compile the Realtek Driver Module
         run: |
-          wget https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
-          unzip -q Magisk-v27.0.apk lib/x86_64/libmagiskboot.so
-          mv lib/x86_64/libmagiskboot.so magiskboot
-          chmod +x magiskboot
+          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
+          cd rtl8188eus
+          
+          export PATH="$(pwd)/../clang/bin:$PATH"
+          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          
+          # Force ARM-64 Android compilation
+          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
+          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
+          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
+          
+          # API Bypass for NetHunter
+          sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed/g' os_dep/linux/ioctl_cfg80211.c
+          sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed/g' os_dep/linux/ioctl_cfg80211.c
 
-          unzip -q boot.zip
-          ./magiskboot unpack boot.img
+          # Compile the module AGAINST the live symvers map we just created
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out \
+            CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
+            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
 
+      - name: Upload Perfect Driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: TP-Link-WN722N-Driver
+          path: rtl8188eus/8188eu.ko
           cp kernel-source/out/arch/arm64/boot/Image kernel
           ./magiskboot repack boot.img nethunter-boot.img
 
