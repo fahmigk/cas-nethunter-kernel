@@ -42,8 +42,9 @@ jobs:
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
-          # ---> THE CRITICAL PATCH FOR THE NETPRIO CGROUP BUG <---
+          # ---> BOTH PATCHES FOR THE NETPRIO CGROUP BUG <---
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
+          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
 
           # Force exact signature spoofing
           sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
