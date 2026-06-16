@@ -26,11 +26,11 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone Kernel Source (Searchur)
+      - name: Clone EXACT Working Kernel Source (Searchur)
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Configure Kernel Headers & Spoof Vermagic
+      - name: Configure Kernel & Inject NetHunter Core
         run: |
           cd kernel-source
           mkdir -p out
@@ -41,22 +41,22 @@ jobs:
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
-          # ---> THE CRITICAL FIX FOR THE CGROUP COMPILATION BUG <---
+          # Fix for Cgroup compilation bug
           sed -i 's/CONFIG_CGROUP_NET_PRIO=y/# CONFIG_CGROUP_NET_PRIO is not set/g' out/.config
           sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
 
-          # ---> THE SPOOFING FIX <---
+          # Force localversion signature matching
           sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
 
-          # Enable core networking to satisfy the driver dependencies
+          # Enable core networking dependencies
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
           EOF
 
-      - name: Compile Kernel Headers
+      - name: Compile Full Kernel to Generate Module.symvers
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
@@ -66,10 +66,11 @@ jobs:
 
           yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
+          # Compiling the full Image generates the exact Module.symvers layout map
           yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 LLVM_IAS=1 modules_prepare
+            LLVM=1 LLVM_IAS=1 Image.gz-dtb
 
       - name: Compile External RTL8188EUS Driver Module (TP-Link WN722N V2)
         run: |
@@ -90,7 +91,7 @@ jobs:
           sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed for nethunter bypass/g' os_dep/linux/ioctl_cfg80211.c
           sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed for nethunter bypass/g' os_dep/linux/ioctl_cfg80211.c
           
-          # Execute the build with the IOCTL macro injected
+          # Execute the build utilizing the newly generated Module.symvers symbol file
           make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out \
             CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
