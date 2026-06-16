@@ -1,101 +1,175 @@
-name: Build Perfect 8188eu Driver (No Flashing)
+name: Build Mi10Ultra Kernel with RTL8188EUS (ReSukisu Built-in)
 
 on:
   workflow_dispatch:
+
+env:
+  KERNEL_VERSION: "4.19.325-cip131-st15-aptusitu-perf-gafc406285284"
+  KERNEL_COMMIT: "06285284"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git automake flex lzop bison \
-            gperf build-essential zip curl zlib1g-dev g++-multilib \
-            libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
-            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
-            make optipng maven libssl-dev pwgen libswitch-perl \
-            policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
-            bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip
+          sudo apt-get update && sudo apt-get install -y \
+            git python3 bison flex libssl-dev libelf-dev bc zip unzip \
+            curl wget cpio rsync build-essential gcc-aarch64-linux-gnu \
+            clang lld device-tree-compiler
 
-      - name: Download Clang Toolchain (Proton Clang)
+      - name: Download MagiskBoot
         run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/magiskboot-linux
+          chmod +x magiskboot-linux
 
-      - name: Clone the Exact Kernel Source (Searchur - aptusitu)
+      - name: Extract boot.zip
         run: |
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+          unzip -q boot.zip -d boot_extracted
+          echo "✅ Extracted boot.zip:"
+          ls -lh boot_extracted/
 
-      - name: Configure Kernel with Live DroidSpaces/ReSukiSU Config
+      - name: Clone Kernel Source (Match commit 06285284)
         run: |
-          cd kernel-source
-          mkdir -p out
+          # Try CoolestEnoch first (has ReSukisu built-in)
+          git clone https://github.com/CoolestEnoch/kernel-su-xiaomi-cas.git kernel
+          cd kernel
           
-          # Copy your live, extracted configuration
-          cp ../stock_config out/.config
-
-          # Disable automatic Git hash appending
-          touch .scmversion
-          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
+          # Checkout exact commit if exists
+          if git rev-parse --verify --quiet ${KERNEL_COMMIT}^{commit}; then
+            git checkout ${KERNEL_COMMIT}
+            echo "✅ Checked out commit ${KERNEL_COMMIT}"
+          else
+            echo "⚠️ Commit ${KERNEL_COMMIT} not found, using latest android-16 branch"
+            git checkout android-16
+          fi
           
-          # Patches for the Netprio Cgroup Bug
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
+          # Verify kernel version in Makefile          echo "Kernel version in source:"
+          grep "VERSION\|PATCHLEVEL\|SUBLEVEL\|EXTRAVERSION" Makefile | head -4
 
-          # Force exact signature spoofing
-          sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
-
-          # Force Wi-Fi subsystems to build natively into the core to satisfy qcacld-3.0
-          cat << 'EOF' >> out/.config
-          CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=y
-          CONFIG_MAC80211=y
-          EOF
-
-      - name: Compile Core to Generate the Exact Module.symvers Map
+      - name: Configure Kernel for RTL8188EUS + Preserve ReSukisu
         run: |
-          cd kernel-source
-          export PATH="$(pwd)/../clang/bin:$PATH"
+          cd kernel
+          
+          # Check if ReSukisu/KernelSU is already enabled
+          if grep -q "CONFIG_KSU=y" arch/arm64/configs/cas_defconfig; then
+            echo "✅ ReSukisu already enabled in defconfig"
+          else
+            echo "CONFIG_KSU=y" >> arch/arm64/configs/cas_defconfig
+            echo "⚠️ Added CONFIG_KSU=y"
+          fi
+          
+          # Add RTL8188EUS as BUILT-IN (not module)
+          cat >> arch/arm64/configs/cas_defconfig << 'EOF'
+
+# NetHunter - RTL8188EUS for TL-WN722N V2
+CONFIG_RTL8188EUS=y
+CONFIG_USB=y
+CONFIG_USB_SUPPORT=y
+CONFIG_CFG80211=y
+CONFIG_MAC80211=y
+CONFIG_WIRELESS_EXT=y
+CONFIG_NETDEVICES=y
+CONFIG_WLAN=y
+EOF
+          
+          echo "✅ Defconfig updated with RTL8188EUS support"
+
+      - name: Build Kernel
+        run: |
+          cd kernel
+          
           export ARCH=arm64
-          export SUBARCH=arm64
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-
-          yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # We compile the Image just to force Linux to generate the Module.symvers file
-          yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 LLVM_IAS=1 Image.gz-dtb modules
+          # Clean previous builds
+          make O=out clean
+          
+          # Generate config
+          make O=out cas_defconfig
+          
+          # Show config summary
+          echo "=== Kernel Config Summary ==="
+          grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
+                    # Build
+          make -j$(nproc) O=out Image.gz dtbo.img
+          
+          echo "✅ Kernel build complete!"
+          ls -lh out/arch/arm64/boot/
 
-      - name: Compile the Realtek Driver Module
+      - name: Repack boot.img (Preserve Original Structure)
         run: |
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
-          cd rtl8188eus
+          mkdir -p out/boot
+          cp boot_extracted/boot.img out/boot/original-boot.img
+          cd out/boot
           
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          # Unpack original boot.img
+          ../../magiskboot-linux unpack original-boot.img
           
-          # Force ARM-64 Android compilation
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
+          # Replace kernel with new one
+          # Check what the original kernel is named
+          if [ -f split_img/zImage ]; then
+            cp ../kernel/out/arch/arm64/boot/Image.gz split_img/zImage
+            echo "✅ Replaced zImage"
+          elif [ -f split_img/Image ]; then
+            cp ../kernel/out/arch/arm64/boot/Image.gz split_img/Image
+            echo "✅ Replaced Image"
+          else
+            # Create Image from Image.gz if needed
+            cp ../kernel/out/arch/arm64/boot/Image.gz .
+            echo "✅ Added Image.gz"
+          fi
           
-          # API Bypass for NetHunter
-          sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed/g' os_dep/linux/ioctl_cfg80211.c
-          sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed/g' os_dep/linux/ioctl_cfg80211.c
+          # Repack
+          ../../magiskboot-linux repack original-boot.img new-boot.img
+          
+          echo "✅ Repacked boot.img:"
+          ls -lh new-boot.img
 
-          # Compile the module AGAINST the live symvers map we just created
-          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out \
-            CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
+      - name: Create Flashable ZIP
+        run: |
+          mkdir -p flashable/META-INF/com/google/android
+          mkdir -p flashable/system/lib/modules/4.19.325-cip131-st15-aptusitu-perf-gafc406285284
+          
+          # Copy new boot.img
+          cp out/boot/new-boot.img flashable/boot.img
+          
+          # Create update-binary
+          cat > flashable/META-INF/com/google/android/update-binary << 'UPDATER'
+#!/sbin/sh
+# NetHunter Kernel for Mi 10 Ultra
+ui_print "Installing NetHunter Kernel..."
+ui_print "Kernel: 4.19.325 with RTL8188EUS"
+ui_print "ReSukiSU: Preserved"
+# Flash boot image
+BLOCK=/dev/block/bootdevice/by-name/boot
+dd if=$TMPDIR/boot.img of=$BLOCK
 
-      - name: Upload Perfect Driver
+ui_print "✅ Installation complete!"
+ui_print "⚠️ Reboot now!"
+UPDATER
+          
+          chmod +x flashable/META-INF/com/google/android/update-binary
+          
+          # Create updater-script
+          echo '#MAGISK' > flashable/META-INF/com/google/android/updater-script
+          
+          # Create flash-zip
+          cd flashable
+          zip -r9 ../NetHunter-Kernel-Mi10Ultra-A16.zip .
+          
+          echo "✅ Created flashable ZIP:"
+          ls -lh ../NetHunter-Kernel-Mi10Ultra-A16.zip
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TP-Link-WN722N-Driver
-          path: rtl8188eus/8188eu.ko
+          name: NetHunter-Boot-Image
+          path: |
+            out/boot/new-boot.img
+            NetHunter-Kernel-Mi10Ultra-A16.zip
