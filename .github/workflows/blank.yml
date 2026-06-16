@@ -95,14 +95,3 @@ jobs:
         with:
           name: TP-Link-WN722N-Driver
           path: rtl8188eus/8188eu.ko
-          cp kernel-source/out/arch/arm64/boot/Image kernel
-          ./magiskboot repack boot.img nethunter-boot.img
-
-          mkdir -p final-package
-          mv nethunter-boot.img final-package/
-
-      - name: Upload Final Package
-        uses: actions/upload-artifact@v4
-        with:
-          name: NetHunter-BuiltIn-Kernel
-          path: final-package/*
