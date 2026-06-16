@@ -1,4 +1,4 @@
-name: Build NetHunter Kernel (ReSukiSU - cas)
+name: Build TP-Link WN722N Driver Only
 
 on:
   workflow_dispatch:
@@ -26,64 +26,34 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone EXACT Working Kernel Source (Searchur)
+      - name: Clone Kernel Source (Searchur)
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Bypass Strict Inline Hook Formatting Check
-        run: |
-          cd kernel-source
-          echo "" > KernelSU/kernel/tools/inline_hook_check.mk || true
-          echo "" > drivers/kernelsu/kernel/tools/inline_hook_check.mk || true
-
-      - name: Configure Kernel & Inject NetHunter Modules
+      - name: Configure Kernel Headers & Spoof Vermagic
         run: |
           cd kernel-source
           mkdir -p out
           
           cp ../stock_config out/.config
 
-          # --- FIX FOR CGROUP COMPILATION BUG ---
-          sed -i 's/CONFIG_CGROUP_NET_PRIO=y/# CONFIG_CGROUP_NET_PRIO is not set/g' out/.config
-          sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
+          # Disable automatic Git hash appending so we can manually lock the signature
+          touch .scmversion
+          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
-          # --- DISABLE CONFLICTING GENERIC DRIVERS ---
-          sed -i 's/CONFIG_R8188EU=m/# CONFIG_R8188EU is not set/g' out/.config
-          sed -i 's/CONFIG_R8188EU=y/# CONFIG_R8188EU is not set/g' out/.config
-          
-          # --- GUARANTEE INLINE HOOKS ---
-          sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/# CONFIG_KSU_MANUAL_HOOK is not set/g' out/.config
-          
-          echo "Injecting NetHunter driver configurations..."
+          # ---> THE SPOOFING FIX <---
+          # Force the exact signature of your currently working ReSukiSU device
+          sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
+          echo "-cip131-st15-aptusitu-perf-gafc406285284" > localversion
 
+          # Enable core networking to satisfy the driver dependencies
           cat << 'EOF' >> out/.config
-          # --- GUARANTEE NATIVE SukiSU INLINE HOOKS (KPM) ---
-          CONFIG_KSU=y
-          CONFIG_KPM=y
-          CONFIG_KALLSYMS=y
-          CONFIG_KALLSYMS_ALL=y
-          CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
-
-          # --- NetHunter Core Network & USB Configs ---
-          CONFIG_USB=y
-          CONFIG_USB_SUPPORT=y
-          CONFIG_NETDEVICES=y
           CONFIG_WIRELESS_EXT=y
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
-          CONFIG_MAC80211_INJECTION=y
-          CONFIG_BT=y
-          
-          CONFIG_ATH9K_HTC=m
-          CONFIG_MT76_USB=m
-          CONFIG_BT_HCIBTUSB=m
           EOF
 
-      - name: Compile the Core Kernel
+      - name: Compile Kernel Headers
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
@@ -93,10 +63,11 @@ jobs:
 
           yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
+          # We only need to build the core architecture to generate the linking headers for the driver
           yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 LLVM_IAS=1 Image.gz-dtb
+            LLVM=1 LLVM_IAS=1 modules_prepare
 
       - name: Compile External RTL8188EUS Driver Module (TP-Link WN722N V2)
         run: |
@@ -113,37 +84,17 @@ jobs:
           # Remove strict compiler warning traps
           sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
           
-          # ---> THE API BACKPORT BYPASS <---
-          # Physically comment out the missing association functions. We don't need them for NetHunter monitor mode!
+          # The API Backport Bypass (Removes the missing association functions)
           sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed for nethunter bypass/g' os_dep/linux/ioctl_cfg80211.c
           sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed for nethunter bypass/g' os_dep/linux/ioctl_cfg80211.c
           
-          # Execute the build
+          # Execute the build with the IOCTL macro injected
           make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- KSRC=$(pwd)/../kernel-source/out \
             CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
 
-      - name: Patch boot.img directly & Package Artifacts
-        run: |
-          wget https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
-          unzip -q Magisk-v27.0.apk lib/x86_64/libmagiskboot.so
-          mv lib/x86_64/libmagiskboot.so magiskboot
-          chmod +x magiskboot
-
-          unzip -q boot.zip
-          ./magiskboot unpack boot.img
-
-          cp kernel-source/out/arch/arm64/boot/Image kernel
-          ./magiskboot repack boot.img nethunter-boot.img
-
-          mkdir -p final-package
-          mv nethunter-boot.img final-package/
-          
-          # The .ko file will now compile flawlessly and be placed in your ZIP package
-          mv rtl8188eus/*.ko final-package/
-
-      - name: Upload Final Package
+      - name: Upload Wi-Fi Driver Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-ReSukiSU-Package
-          path: final-package/*
+          name: TP-Link-WN722N-Driver
+          path: rtl8188eus/8188eu.ko
