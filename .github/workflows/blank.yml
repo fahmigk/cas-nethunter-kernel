@@ -42,18 +42,18 @@ jobs:
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
-          # ---> BOTH PATCHES FOR THE NETPRIO CGROUP BUG <---
+          # Patches for the Netprio Cgroup Bug
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
 
           # Force exact signature spoofing
           sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
 
-          # Ensure module dependencies are met
+          # Force Wi-Fi subsystems to build natively into the core to satisfy qcacld-3.0
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=m
-          CONFIG_MAC80211=m
+          CONFIG_CFG80211=y
+          CONFIG_MAC80211=y
           EOF
 
       - name: Compile Core to Generate the Exact Module.symvers Map
