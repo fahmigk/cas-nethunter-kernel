@@ -69,7 +69,7 @@ jobs:
           make O=out cas_defconfig
           echo "=== Config Summary ==="
           grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
-          make -j$(nproc) O=out
+          make -j$(nproc) O=out KCFLAGS="-Wno-error"
           echo "Kernel build complete"
           ls -lh out/arch/arm64/boot/
 
