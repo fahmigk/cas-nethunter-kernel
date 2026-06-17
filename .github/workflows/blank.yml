@@ -5,7 +5,7 @@ on:
 
 env:
   KERNEL_VERSION: "4.19.325-cip131-st15-aptusitu-perf-gafc406285284"
-  KERNEL_COMMIT: "06285284"
+  KERNEL_COMMIT: "afc406285284"
 
 jobs:
   build:
@@ -27,14 +27,13 @@ jobs:
 
       - name: Clone Kernel Source
         run: |
-          git clone https://github.com/CoolestEnoch/kernel-su-xiaomi-cas.git kernel
+          git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
           cd kernel
-          if git rev-parse --verify --quiet 06285284^{commit}; then
-            git checkout 06285284
-            echo "Checked out commit 06285284"
+          if git rev-parse --verify --quiet afc406285284^{commit}; then
+            git checkout afc406285284
+            echo "Checked out exact commit afc406285284"
           else
-            echo "Commit not found, using latest"
-            git checkout android-16
+            echo "Commit not found, using latest from android16-aptusitu branch"
           fi
           grep "VERSION\|PATCHLEVEL\|SUBLEVEL\|EXTRAVERSION" Makefile | head -4
 
@@ -47,8 +46,8 @@ jobs:
             echo "CONFIG_KSU=y" >> arch/arm64/configs/cas_defconfig
             echo "Added CONFIG_KSU=y"
           fi
-          echo "" >> arch/arm64/configs/cas_defconfig          echo "# NetHunter RTL8188EUS" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_RTL8188EUS=y" >> arch/arm64/configs/cas_defconfig
+          echo "" >> arch/arm64/configs/cas_defconfig
+          echo "# NetHunter RTL8188EUS" >> arch/arm64/configs/cas_defconfig          echo "CONFIG_RTL8188EUS=y" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_USB=y" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_USB_SUPPORT=y" >> arch/arm64/configs/cas_defconfig
           echo "CONFIG_CFG80211=y" >> arch/arm64/configs/cas_defconfig
@@ -65,11 +64,12 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
+          export LOCALVERSION="-aptusitu-perf"
           make O=out clean
           make O=out cas_defconfig
           echo "=== Config Summary ==="
           grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
-          make -j$(nproc) O=out Image.gz dtbo.img
+          make -j$(nproc) O=out
           echo "Kernel build complete"
           ls -lh out/arch/arm64/boot/
 
@@ -87,16 +87,26 @@ jobs:
           cp boot_extracted/boot.img out/boot/original-boot.img
           cd out/boot
           ../../magiskboot-linux unpack original-boot.img
+          
+          if [ -f ../kernel/out/arch/arm64/boot/Image.gz ]; then
+            KERNEL_IMG=../kernel/out/arch/arm64/boot/Image.gz
+          elif [ -f ../kernel/out/arch/arm64/boot/Image ]; then
+            KERNEL_IMG=../kernel/out/arch/arm64/boot/Image
+          else
+            echo "Kernel image not found!"
+            exit 1
+          fi
           if [ -f split_img/zImage ]; then
-            cp ../kernel/out/arch/arm64/boot/Image.gz split_img/zImage
+            cp $KERNEL_IMG split_img/zImage
             echo "Replaced zImage"
           elif [ -f split_img/Image ]; then
-            cp ../kernel/out/arch/arm64/boot/Image.gz split_img/Image
+            cp $KERNEL_IMG split_img/Image
             echo "Replaced Image"
           else
-            cp ../kernel/out/arch/arm64/boot/Image.gz .
-            echo "Added Image.gz"
-          fi          ../../magiskboot-linux repack original-boot.img new-boot.img
+            cp $KERNEL_IMG split_img/
+            echo "Added kernel image to split_img"
+          fi
+          ../../magiskboot-linux repack original-boot.img new-boot.img
           echo "Repacked boot.img:"
           ls -lh new-boot.img
 
