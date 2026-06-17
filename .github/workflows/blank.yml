@@ -1,4 +1,4 @@
-name: Build Mi10Ultra Kernel with RTL8188EUS + ReSukiSU
+name: Build Mi10Ultra Kernel with RTL8188EUS
 
 on:
   workflow_dispatch:
@@ -36,39 +36,18 @@ jobs:
             echo "Commit not found, using latest from android16-aptusitu branch"
           fi
 
-      - name: Integrate ReSukiSU (KernelSU)
+      - name: Configure Kernel
         run: |
-          cd kernel
-          # Clone ReSukiSU into kernel directory
-          git clone https://github.com/rsuntk/KernelSU.git KernelSU
-          cd KernelSU
-          # Use the stable v4.1.0 version
-          git checkout v4.1.0 || git checkout main
-          cd ..
-          echo "ReSukiSU integrated"
-
-      - name: Configure Kernel 
-      run: |
           cd kernel
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=aarch64-linux-gnu-gcc
           make O=out cas_defconfig
           
-          # Enable KernelSU/ReSukiSU
-          echo "" >> out/.config
-          echo "# ReSukiSU/KernelSU" >> out/.config
-          echo "CONFIG_KSU=y" >> out/.config
-          echo "CONFIG_KSU_KPROBES_HOOK=y" >> out/.config
-          echo "CONFIG_KSU_SUSFS=y" >> out/.config
-          
-          # Enable NetHunter and required configs
-          echo "# NetHunter RTL8188EUS" >> out/.config
           echo "CONFIG_RTL8188EUS=y" >> out/.config
           echo "CONFIG_USB=y" >> out/.config
           echo "CONFIG_USB_SUPPORT=y" >> out/.config
-          echo "CONFIG_CFG80211=y" >> out/.config
-          echo "CONFIG_MAC80211=y" >> out/.config
+          echo "CONFIG_CFG80211=y" >> out/.config          echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
           echo "CONFIG_NETDEVICES=y" >> out/.config
           echo "CONFIG_WLAN=y" >> out/.config
@@ -80,24 +59,19 @@ jobs:
       - name: Patch and Build Kernel
         run: |
           cd kernel
+          
+          # CRITICAL FIX: Remove 'inline' from bpf_trace.c to fix GCC 11+ hard error
+          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
+          echo "Patched bpf_trace.c successfully"
+          
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=aarch64-linux-gnu-gcc
           export LOCALVERSION="-aptusitu-perf"
           
-          # CRITICAL FIX: Patch bpf_trace.c inline varargs hard error for GCC 11+
-          echo "Patching bpf_trace.c for GCC 11+ compatibility..."
-          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-          
-          # Patch walt.h format string errors
-          echo "Patching walt.h format strings..."
-          sed -i 's/%s=%llu/%s=%lu/g' kernel/sched/walt.h
-          
-          # Build with KernelSU
-          echo "Starting kernel build with ReSukiSU..."
-          make -j$(nproc) O=out KCFLAGS="-Wno-error" Image.gz dtbo.img
-          
-          echo "=== Checking output files ==="          ls -lh out/arch/arm64/boot/
+          make -j$(nproc) O=out KCFLAGS="-Wno-error"
+          echo "Kernel build complete"
+          ls -lh out/arch/arm64/boot/
 
       - name: Extract MagiskBoot from Official APK
         run: |
@@ -116,17 +90,14 @@ jobs:
           echo "=== Unpacking original boot.img ==="
           ../../magiskboot-linux unpack original-boot.img
           
-          # Find the compiled kernel image
           if [ -f ../../kernel/out/arch/arm64/boot/Image.gz ]; then
             KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image.gz
           elif [ -f ../../kernel/out/arch/arm64/boot/Image ]; then
             KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image
           else
             echo "Kernel image not found! Build likely failed."
-            exit 1
-          fi
+            exit 1          fi
 
-          # Magiskboot v27 extracts the kernel simply as 'kernel' in the current directory
           if [ -f kernel ]; then
             cp $KERNEL_IMG kernel
             echo "Successfully replaced kernel image"
@@ -143,5 +114,5 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-Boot-Image-with-ReSukiSU
+          name: NetHunter-Boot-Image
           path: out/boot/new-boot.img
