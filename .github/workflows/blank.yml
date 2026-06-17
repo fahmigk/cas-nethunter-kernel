@@ -47,7 +47,8 @@ jobs:
           cd ..
           echo "ReSukiSU integrated"
 
-      - name: Configure Kernel        run: |
+      - name: Configure Kernel 
+      run: |
           cd kernel
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
