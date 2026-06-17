@@ -35,48 +35,52 @@ jobs:
           else
             echo "Commit not found, using latest from android16-aptusitu branch"
           fi
-          grep "VERSION\|PATCHLEVEL\|SUBLEVEL\|EXTRAVERSION" Makefile | head -4
 
       - name: Configure Kernel
         run: |
           cd kernel
-          if grep -q "CONFIG_KSU=y" arch/arm64/configs/cas_defconfig; then
-            echo "ReSukisu already enabled"
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=aarch64-linux-gnu-gcc
+          make O=out cas_defconfig
+          
+          # Enable NetHunter and required configs
+          echo "CONFIG_RTL8188EUS=y" >> out/.config
+          echo "CONFIG_USB=y" >> out/.config
+          echo "CONFIG_USB_SUPPORT=y" >> out/.config          echo "CONFIG_CFG80211=y" >> out/.config
+          echo "CONFIG_MAC80211=y" >> out/.config
+          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
+          echo "CONFIG_NETDEVICES=y" >> out/.config
+          echo "CONFIG_WLAN=y" >> out/.config
+          
+          # Ensure KSU is enabled if present
+          if grep -q "CONFIG_KSU" out/.config; then
+            sed -i 's/# CONFIG_KSU is not set/CONFIG_KSU=y/' out/.config
           else
-            echo "CONFIG_KSU=y" >> arch/arm64/configs/cas_defconfig
-            echo "Added CONFIG_KSU=y"
+            echo "CONFIG_KSU=y" >> out/.config
           fi
-          echo "" >> arch/arm64/configs/cas_defconfig
-          echo "# NetHunter RTL8188EUS" >> arch/arm64/configs/cas_defconfig          echo "CONFIG_RTL8188EUS=y" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_USB=y" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_USB_SUPPORT=y" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_CFG80211=y" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_MAC80211=y" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_WIRELESS_EXT=y" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_NETDEVICES=y" >> arch/arm64/configs/cas_defconfig
-          echo "CONFIG_WLAN=y" >> arch/arm64/configs/cas_defconfig
-          echo "Defconfig updated"
+          
+          make O=out olddefconfig
+          echo "=== Config Summary ==="
+          grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
 
-      - name: Patch Source Code Errors
-        run: |
-          cd kernel
-          # Fix bpf_trace.c inline varargs hard error
-          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-          echo "Patched bpf_trace.c"
-
-      - name: Build Kernel
+      - name: Patch and Build Kernel
         run: |
           cd kernel
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=aarch64-linux-gnu-gcc
           export LOCALVERSION="-aptusitu-perf"
-          make O=out clean
-          make O=out cas_defconfig
-          echo "=== Config Summary ==="
-          grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
-          make -j$(nproc) O=out KCFLAGS="-Wno-error"
-          echo "Kernel build complete"
+          
+          # CRITICAL FIX: Patch bpf_trace.c inline varargs hard error for GCC 11+
+          echo "Patching bpf_trace.c for GCC 11+ compatibility..."
+          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
+          
+          # Build explicitly targeting Image.gz and dtbo.img
+          echo "Starting kernel build..."
+          make -j$(nproc) O=out KCFLAGS="-Wno-error" Image.gz dtbo.img
+          
+          echo "=== Checking output files ==="
           ls -lh out/arch/arm64/boot/
 
       - name: Extract MagiskBoot from Official APK
@@ -92,47 +96,35 @@ jobs:
           mkdir -p out/boot
           cp boot_extracted/boot.img out/boot/original-boot.img
           cd out/boot
+                    echo "=== Unpacking original boot.img ==="
           ../../magiskboot-linux unpack original-boot.img
           
-          if [ -f ../kernel/out/arch/arm64/boot/Image.gz ]; then
-            KERNEL_IMG=../kernel/out/arch/arm64/boot/Image.gz
-          elif [ -f ../kernel/out/arch/arm64/boot/Image ]; then            KERNEL_IMG=../kernel/out/arch/arm64/boot/Image
+          # Find the compiled kernel image
+          if [ -f ../../kernel/out/arch/arm64/boot/Image.gz ]; then
+            KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image.gz
+          elif [ -f ../../kernel/out/arch/arm64/boot/Image ]; then
+            KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image
           else
-            echo "Kernel image not found!"
+            echo "Kernel image not found! Build likely failed."
             exit 1
           fi
 
-          if [ -f split_img/zImage ]; then
-            cp $KERNEL_IMG split_img/zImage
-            echo "Replaced zImage"
-          elif [ -f split_img/Image ]; then
-            cp $KERNEL_IMG split_img/Image
-            echo "Replaced Image"
+          # Magiskboot v27 extracts the kernel simply as 'kernel' in the current directory
+          if [ -f kernel ]; then
+            cp $KERNEL_IMG kernel
+            echo "Successfully replaced kernel image"
           else
-            cp $KERNEL_IMG split_img/
-            echo "Added kernel image to split_img"
+            echo "Magiskboot did not extract 'kernel' file!"
+            ls -lh
+            exit 1
           fi
+          
+          echo "=== Repacking boot.img ==="
           ../../magiskboot-linux repack original-boot.img new-boot.img
-          echo "Repacked boot.img:"
           ls -lh new-boot.img
-
-      - name: Create Flashable ZIP
-        run: |
-          mkdir -p flashable/META-INF/com/google/android
-          mkdir -p flashable/system/lib/modules/4.19.325-cip131-st15-aptusitu-perf-gafc406285284
-          cp out/boot/new-boot.img flashable/boot.img
-          printf '#!/sbin/sh\nui_print "Installing NetHunter Kernel..."\nui_print "Kernel: 4.19.325 with RTL8188EUS"\nui_print "ReSukiSU: Preserved"\nBLOCK=/dev/block/bootdevice/by-name/boot\ndd if=$TMPDIR/boot.img of=$BLOCK\nui_print "Installation complete!"\nui_print "Reboot now!"\n' > flashable/META-INF/com/google/android/update-binary
-          chmod +x flashable/META-INF/com/google/android/update-binary
-          echo '#MAGISK' > flashable/META-INF/com/google/android/updater-script
-          cd flashable
-          zip -r9 ../NetHunter-Kernel-Mi10Ultra-A16.zip .
-          echo "Created flashable ZIP:"
-          ls -lh ../NetHunter-Kernel-Mi10Ultra-A16.zip
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: NetHunter-Boot-Image
-          path: |
-            out/boot/new-boot.img
-            NetHunter-Kernel-Mi10Ultra-A16.zip
+          path: out/boot/new-boot.img
