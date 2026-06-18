@@ -22,107 +22,79 @@ jobs:
       - name: Extract boot.zip
         run: |
           unzip -q boot.zip -d boot_extracted
-          echo "Extracted boot.zip:"
           ls -lh boot_extracted/
 
       - name: Clone Kernel Source
         run: |
           git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
           cd kernel
-          if git rev-parse --verify --quiet afc406285284^{commit}; then
-            git checkout afc406285284
-            echo "Checked out exact commit afc406285284"
-          else
-            echo "Commit not found, using latest from android16-aptusitu branch"
+          if git rev-parse --verify --quiet ${KERNEL_COMMIT}^{commit}; then
+            git checkout ${KERNEL_COMMIT}
           fi
 
-      - name: Patch Source Code to Fix Build Errors
+      - name: Patch Kernel Source for Clang
         run: |
           cd kernel
-          # Fix 1: Remove 'inline' from bpf_trace.c (causes hard error with varargs)
-          echo "Patching bpf_trace.c..."
           sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-          
-          # Fix 2: Disable -Werror in Makefiles to bypass format string errors in walt.h
-          echo "Disabling -Werror..."
-          sed -i 's/-Werror//g' Makefile
-          sed -i 's/-Werror//g' scripts/Makefile.build
-                    echo "Patches applied successfully!"
+          echo "Patched bpf_trace.c successfully"
 
       - name: Configure Kernel
         run: |
           cd kernel
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=aarch64-linux-gnu-gcc
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           make O=out cas_defconfig
-          
-          # Enable NetHunter and required configs
           echo "CONFIG_RTL8188EUS=y" >> out/.config
-          echo "CONFIG_USB=y" >> out/.config
-          echo "CONFIG_USB_SUPPORT=y" >> out/.config
+          echo "CONFIG_USB=y" >> out/.config          echo "CONFIG_USB_SUPPORT=y" >> out/.config
           echo "CONFIG_CFG80211=y" >> out/.config
           echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
           echo "CONFIG_NETDEVICES=y" >> out/.config
           echo "CONFIG_WLAN=y" >> out/.config
-          
           make O=out olddefconfig
-          echo "=== Config Summary ==="
-          grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
 
       - name: Build Kernel
         run: |
           cd kernel
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=aarch64-linux-gnu-gcc
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           export LOCALVERSION="-aptusitu-perf"
-          
-          make -j$(nproc) O=out KCFLAGS="-Wno-error"
-          echo "Kernel build complete"
+          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format"
           ls -lh out/arch/arm64/boot/
 
-      - name: Extract MagiskBoot from Official APK
+      - name: Extract MagiskBoot
         run: |
           wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk -O magisk.apk
           unzip -q magisk.apk -d magisk_extracted
           cp magisk_extracted/lib/x86_64/libmagiskboot.so magiskboot-linux
           chmod +x magiskboot-linux
-          ./magiskboot-linux --version || echo "magiskboot ready"
 
       - name: Repack boot.img
         run: |
           mkdir -p out/boot
           cp boot_extracted/boot.img out/boot/original-boot.img
           cd out/boot
-                    echo "=== Unpacking original boot.img ==="
           ../../magiskboot-linux unpack original-boot.img
-          
           if [ -f ../../kernel/out/arch/arm64/boot/Image.gz ]; then
             KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image.gz
           elif [ -f ../../kernel/out/arch/arm64/boot/Image ]; then
             KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image
           else
-            echo "Kernel image not found! Build likely failed."
             exit 1
           fi
-
           if [ -f kernel ]; then
             cp $KERNEL_IMG kernel
-            echo "Successfully replaced kernel image"
           else
-            echo "Magiskboot did not extract 'kernel' file!"
-            ls -lh
             exit 1
           fi
-          
-          echo "=== Repacking boot.img ==="
           ../../magiskboot-linux repack original-boot.img new-boot.img
           ls -lh new-boot.img
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
-        with:
-          name: NetHunter-Boot-Image
+        with:          name: NetHunter-Boot-Image
           path: out/boot/new-boot.img
