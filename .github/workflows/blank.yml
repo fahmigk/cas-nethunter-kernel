@@ -17,7 +17,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential clang lld device-tree-compiler
 
       - name: Extract boot.zip
         run: |
@@ -36,39 +36,22 @@ jobs:
             echo "Commit not found, using latest from android16-aptusitu branch"
           fi
 
-      - name: Patch Source Code to Fix Build Errors
+      - name: Patch Kernel Source
         run: |
           cd kernel
-          
-          # Fix 1: Remove 'inline' from bpf_trace.c (causes hard error with varargs)
+          # Fix 1: Remove 'inline' from bpf_trace.c to fix Clang/GCC varargs hard error
           echo "Patching bpf_trace.c..."
           sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-          
-          # Fix 2: Disable -Werror in Makefiles to bypass format string errors in walt.h
-          echo "Disabling -Werror..."
-          sed -i 's/-Werror//g' Makefile
-          sed -i 's/-Werror//g' scripts/Makefile.build          
-          echo "Patches applied successfully!"
+          echo "bpf_trace.c patched successfully!"
 
       - name: Configure Kernel
         run: |
           cd kernel
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=aarch64-linux-gnu-gcc
+          export ARCH=arm64          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           make O=out cas_defconfig
           
-          # Enable NetHunter and required configs
-          echo "CONFIG_RTL8188EUS=y" >> out/.config
-          echo "CONFIG_USB=y" >> out/.config
-          echo "CONFIG_USB_SUPPORT=y" >> out/.config
-          echo "CONFIG_CFG80211=y" >> out/.config
-          echo "CONFIG_MAC80211=y" >> out/.config
-          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
-          echo "CONFIG_NETDEVICES=y" >> out/.config
-          echo "CONFIG_WLAN=y" >> out/.config
-          
-          make O=out olddefconfig
           echo "=== Config Summary ==="
           grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
 
@@ -77,10 +60,13 @@ jobs:
           cd kernel
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=aarch64-linux-gnu-gcc
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           export LOCALVERSION="-aptusitu-perf"
           
-          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format"
+          # KCFLAGS="-Wno-error" ignores the walt.h format warnings
+          make -j$(nproc) O=out KCFLAGS="-Wno-error"
+          
           echo "Kernel build complete"
           ls -lh out/arch/arm64/boot/
 
@@ -96,7 +82,8 @@ jobs:
         run: |
           mkdir -p out/boot
           cp boot_extracted/boot.img out/boot/original-boot.img
-          cd out/boot          
+          cd out/boot
+          
           echo "=== Unpacking original boot.img ==="
           ../../magiskboot-linux unpack original-boot.img
           
@@ -109,8 +96,7 @@ jobs:
             exit 1
           fi
 
-          if [ -f kernel ]; then
-            cp $KERNEL_IMG kernel
+          if [ -f kernel ]; then            cp $KERNEL_IMG kernel
             echo "Successfully replaced kernel image"
           else
             echo "Magiskboot did not extract 'kernel' file!"
