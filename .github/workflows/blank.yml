@@ -1,101 +1,131 @@
-name: Build Perfect 8188eu Driver (No Flashing)
+name: Build Mi10Ultra Kernel with RTL8188EUS
 
 on:
   workflow_dispatch:
+
+env:
+  KERNEL_VERSION: "4.19.325-cip131-st15-aptusitu-perf-gafc406285284"
+  KERNEL_COMMIT: "afc406285284"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git automake flex lzop bison \
-            gperf build-essential zip curl zlib1g-dev g++-multilib \
-            libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
-            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
-            make optipng maven libssl-dev pwgen libswitch-perl \
-            policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
-            bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler
 
-      - name: Download Clang Toolchain (Proton Clang)
+      - name: Extract boot.zip
         run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          unzip -q boot.zip -d boot_extracted
+          echo "Extracted boot.zip:"
+          ls -lh boot_extracted/
 
-      - name: Clone the Exact Kernel Source (Searchur - aptusitu)
+      - name: Clone Kernel Source
         run: |
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+          git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
+          cd kernel
+          if git rev-parse --verify --quiet afc406285284^{commit}; then
+            git checkout afc406285284
+            echo "Checked out exact commit afc406285284"
+          else
+            echo "Commit not found, using latest from android16-aptusitu branch"
+            git checkout android16-aptusitu
+          fi
 
-      - name: Configure Kernel with Live DroidSpaces/ReSukiSU Config
+      - name: Patch Source Code to Fix Build Errors
         run: |
-          cd kernel-source
-          mkdir -p out
+          cd kernel
           
-          # Copy your live, extracted configuration
-          cp ../stock_config out/.config
-
-          # Disable automatic Git hash appending
-          touch .scmversion
-          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
+          # Fix 1: Remove 'inline' from bpf_trace.c (causes hard error with varargs)
+          echo "Patching bpf_trace.c..."
+          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
           
-          # Patches for the Netprio Cgroup Bug
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
+          # Fix 2: Disable -Werror globally to bypass format string errors in walt.h
+          echo "Disabling -Werror..."
+          find . -name "Makefile*" -exec sed -i 's/-Werror//g' {} \;          find . -name "*.mk" -exec sed -i 's/-Werror//g' {} \;
+          
+          echo "Patches applied successfully!"
 
-          # Force exact signature spoofing
-          sed -i 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-cip131-st15-aptusitu-perf-gafc406285284"/g' out/.config
-
-          # Force Wi-Fi subsystems to build natively into the core to satisfy qcacld-3.0
-          cat << 'EOF' >> out/.config
-          CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=y
-          CONFIG_MAC80211=y
-          EOF
-
-      - name: Compile Core to Generate the Exact Module.symvers Map
+      - name: Configure Kernel
         run: |
-          cd kernel-source
-          export PATH="$(pwd)/../clang/bin:$PATH"
+          cd kernel
           export ARCH=arm64
-          export SUBARCH=arm64
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-
-          yes "" | make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=aarch64-linux-gnu-gcc
           
-          # We compile the Image just to force Linux to generate the Module.symvers file
-          yes "" | make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 LLVM_IAS=1 Image.gz-dtb modules
+          make O=out cas_defconfig
+          
+          # Enable RTL8188EUS built-in
+          echo "CONFIG_RTL8188EUS=y" >> out/.config
+          echo "CONFIG_USB=y" >> out/.config
+          echo "CONFIG_USB_SUPPORT=y" >> out/.config
+          echo "CONFIG_CFG80211=y" >> out/.config
+          echo "CONFIG_MAC80211=y" >> out/.config
+          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
+          
+          make O=out olddefconfig
+          
+          echo "=== Config Summary ==="
+          grep -E "CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
 
-      - name: Compile the Realtek Driver Module
+      - name: Build Kernel
         run: |
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
-          cd rtl8188eus
+          cd kernel
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=aarch64-linux-gnu-gcc
+          export LOCALVERSION="-aptusitu-perf"
           
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          make -j$(nproc) O=out Image.gz dtbo.img
           
-          # Force ARM-64 Android compilation
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
-          
-          # API Bypass for NetHunter
-          sed -i 's/.*rtw_cfg80211_send_rx_assoc.*/\/\/ removed/g' os_dep/linux/ioctl_cfg80211.c
-          sed -i 's/.*cfg80211_send_disassoc.*/\/\/ removed/g' os_dep/linux/ioctl_cfg80211.c
+          echo "Kernel build complete!"
+          ls -lh out/arch/arm64/boot/
 
-          # Compile the module AGAINST the live symvers map using LLVM LTO Flags
-          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 KSRC=$(pwd)/../kernel-source/out \
-            CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
+      - name: Extract MagiskBoot from Official APK
+        run: |
+          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk -O magisk.apk
+          unzip -q magisk.apk -d magisk_extracted
+          cp magisk_extracted/lib/x86_64/libmagiskboot.so magiskboot-linux
+          chmod +x magiskboot-linux
+          ./magiskboot-linux --version || echo "magiskboot ready"
 
-      - name: Upload Perfect Driver
+      - name: Repack boot.img
+        run: |
+          mkdir -p out/boot          cp boot_extracted/boot.img out/boot/original-boot.img
+          cd out/boot
+          
+          echo "=== Unpacking original boot.img ==="
+          ../../magiskboot-linux unpack original-boot.img
+          
+          if [ -f ../../kernel/out/arch/arm64/boot/Image.gz ]; then
+            KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image.gz
+          elif [ -f ../../kernel/out/arch/arm64/boot/Image ]; then
+            KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image
+          else
+            echo "Kernel image not found! Build likely failed."
+            exit 1
+          fi
+
+          if [ -f kernel ]; then
+            cp $KERNEL_IMG kernel
+            echo "Successfully replaced kernel image"
+          else
+            echo "Magiskboot did not extract 'kernel' file!"
+            ls -lh
+            exit 1
+          fi
+          
+          echo "=== Repacking boot.img ==="
+          ../../magiskboot-linux repack original-boot.img new-boot.img
+          ls -lh new-boot.img
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TP-Link-WN722N-Driver
-          path: rtl8188eus/8188eu.ko
+          name: NetHunter-Boot-Image
+          path: out/boot/new-boot.img
