@@ -32,22 +32,27 @@ jobs:
             git checkout ${KERNEL_COMMIT}
           fi
 
-      - name: Patch Kernel Source for Clang
+      - name: Patch Kernel Source
         run: |
           cd kernel
+          # Fix 1: Remove 'inline' from bpf_trace.c
           sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-          echo "Patched bpf_trace.c successfully"
+          
+          # Fix 2: Fix walt.h format string mismatch (%llu -> %u)
+          sed -i 's/printk_deferred("%s=%llu"/printk_deferred("%s=%u"/g' kernel/sched/walt.h
+          
+          echo "Patches applied successfully"
 
       - name: Configure Kernel
         run: |
           cd kernel
           export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-          export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           make O=out cas_defconfig
           echo "CONFIG_RTL8188EUS=y" >> out/.config
-          echo "CONFIG_USB=y" >> out/.config          echo "CONFIG_USB_SUPPORT=y" >> out/.config
+          echo "CONFIG_USB=y" >> out/.config
+          echo "CONFIG_USB_SUPPORT=y" >> out/.config
           echo "CONFIG_CFG80211=y" >> out/.config
           echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
@@ -63,7 +68,7 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export LOCALVERSION="-aptusitu-perf"
-          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format"
+          make -j$(nproc) O=out KCFLAGS="-Wno-error"
           ls -lh out/arch/arm64/boot/
 
       - name: Extract MagiskBoot
@@ -91,10 +96,10 @@ jobs:
           else
             exit 1
           fi
-          ../../magiskboot-linux repack original-boot.img new-boot.img
-          ls -lh new-boot.img
+          ../../magiskboot-linux repack original-boot.img new-boot.img          ls -lh new-boot.img
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
-        with:          name: NetHunter-Boot-Image
+        with:
+          name: NetHunter-Boot-Image
           path: out/boot/new-boot.img
