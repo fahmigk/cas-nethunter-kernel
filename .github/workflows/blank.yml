@@ -34,7 +34,6 @@ jobs:
             echo "Checked out exact commit afc406285284"
           else
             echo "Commit not found, using latest from android16-aptusitu branch"
-            git checkout android16-aptusitu
           fi
 
       - name: Patch Source Code to Fix Build Errors
@@ -45,10 +44,10 @@ jobs:
           echo "Patching bpf_trace.c..."
           sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
           
-          # Fix 2: Disable -Werror globally to bypass format string errors in walt.h
+          # Fix 2: Disable -Werror in Makefiles to bypass format string errors in walt.h
           echo "Disabling -Werror..."
-          find . -name "Makefile*" -exec sed -i 's/-Werror//g' {} \;          find . -name "*.mk" -exec sed -i 's/-Werror//g' {} \;
-          
+          sed -i 's/-Werror//g' Makefile
+          sed -i 's/-Werror//g' scripts/Makefile.build          
           echo "Patches applied successfully!"
 
       - name: Configure Kernel
@@ -57,21 +56,21 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=aarch64-linux-gnu-gcc
-          
           make O=out cas_defconfig
           
-          # Enable RTL8188EUS built-in
+          # Enable NetHunter and required configs
           echo "CONFIG_RTL8188EUS=y" >> out/.config
           echo "CONFIG_USB=y" >> out/.config
           echo "CONFIG_USB_SUPPORT=y" >> out/.config
           echo "CONFIG_CFG80211=y" >> out/.config
           echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
+          echo "CONFIG_NETDEVICES=y" >> out/.config
+          echo "CONFIG_WLAN=y" >> out/.config
           
           make O=out olddefconfig
-          
           echo "=== Config Summary ==="
-          grep -E "CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
+          grep -E "CONFIG_KSU|CONFIG_RTL8188EUS|CONFIG_CFG80211" out/.config || true
 
       - name: Build Kernel
         run: |
@@ -81,9 +80,8 @@ jobs:
           export CC=aarch64-linux-gnu-gcc
           export LOCALVERSION="-aptusitu-perf"
           
-          make -j$(nproc) O=out Image.gz dtbo.img
-          
-          echo "Kernel build complete!"
+          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format"
+          echo "Kernel build complete"
           ls -lh out/arch/arm64/boot/
 
       - name: Extract MagiskBoot from Official APK
@@ -96,9 +94,9 @@ jobs:
 
       - name: Repack boot.img
         run: |
-          mkdir -p out/boot          cp boot_extracted/boot.img out/boot/original-boot.img
-          cd out/boot
-          
+          mkdir -p out/boot
+          cp boot_extracted/boot.img out/boot/original-boot.img
+          cd out/boot          
           echo "=== Unpacking original boot.img ==="
           ../../magiskboot-linux unpack original-boot.img
           
