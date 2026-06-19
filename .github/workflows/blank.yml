@@ -62,18 +62,16 @@ jobs:
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
-          export ARCH=arm64
-          export SUBARCH=arm64
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
-          # FIX: Passing LLVM parameters here forces the configuration to process cleanly
-          yes "" | make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 WERROR=0 olddefconfig
+          # Unify all arguments so olddefconfig and make match perfectly
+          # Added -Wno-unknown-warning-option to silence the massive wall of fake errors
+          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
+
+          yes "" | make $MAKE_ARGS olddefconfig
           
           # Compile the full kernel cleanly
-          make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 LLVM_IAS=1 WERROR=0 Image.gz-dtb modules
+          make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
 
       - name: Compile the Realtek Driver Module
         run: |
@@ -102,7 +100,7 @@ jobs:
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           
           mkdir -p TP-Link-Driver
-          cp ../rtl8188eus/8188eu.ko King-Driver/ || cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
+          cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
           
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
 
