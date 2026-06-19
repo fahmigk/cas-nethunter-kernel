@@ -36,18 +36,16 @@ jobs:
           mkdir -p out
           
           # Copy the live configuration you extracted earlier
-          # IMPORTANT: Make sure 'stock_config' is uploaded to your GitHub repo root!
           cp ../stock_config out/.config
 
           # Disable automatic Git hash appending
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
 
-          # --- FIX COMPILER CRASHES (-Werror) ---
-          # This brutally strips -Werror from all Makefiles. 
-          # The compiler will show warnings for walt.h, but it will NOT stop the build.
-          find . -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} +
-          find . -type f -name "Kbuild" -exec sed -i 's/-Werror//g' {} +
+          # --- FIX COMPILER CRASHES Safely ---
+          # Changes -Werror into -Wno-error so flags like -Werror=return-type stay syntactically valid
+          find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
+          find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
 
           # Configure Wi-Fi Core to support the external module
           cat << 'EOF' >> out/.config
@@ -65,13 +63,13 @@ jobs:
           export SUBARCH=arm64
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
-          yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
+          yes "" | make O=out ARCH=arm64 CC=clang WERROR=0 olddefconfig
           
-          # Compile the full kernel to generate Image.gz-dtb AND the Module.symvers map
+          # Compile the full kernel using WERROR=0 to enforce non-fatal warnings
           make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 LLVM_IAS=1 Image.gz-dtb modules
+            LLVM=1 LLVM_IAS=1 WERROR=0 Image.gz-dtb modules
 
       - name: Compile the Realtek Driver Module
         run: |
