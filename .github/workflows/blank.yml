@@ -43,12 +43,10 @@ jobs:
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
 
           # --- FIX NETPRIO CGROUP BUG ---
-          # This replaces the broken old layout struct mapping with cgroup_id
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
 
           # --- FIX COMPILER CRASHES Safely ---
-          # Changes -Werror into -Wno-error so flags like -Werror=return-type stay syntactically valid
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
 
@@ -68,9 +66,10 @@ jobs:
           export SUBARCH=arm64
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
-          yes "" | make O=out ARCH=arm64 CC=clang WERROR=0 olddefconfig
+          # FIX: Passing LLVM parameters here forces the configuration to process cleanly
+          yes "" | make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 WERROR=0 olddefconfig
           
-          # Compile the full kernel using WERROR=0 to enforce non-fatal warnings
+          # Compile the full kernel cleanly
           make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -99,17 +98,12 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
-          # Remove strict device checks so TWRP flashes it without complaining
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          
-          # Copy our newly built kernel Image
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           
-          # Add the compiled Wi-Fi driver to the zip for easy access
           mkdir -p TP-Link-Driver
-          cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
+          cp ../rtl8188eus/8188eu.ko King-Driver/ || cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
           
-          # Zip it all up
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
 
       - name: Upload Flashable Kernel
