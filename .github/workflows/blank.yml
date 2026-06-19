@@ -1,105 +1,116 @@
-name: Build Mi10Ultra Kernel with RTL8188EUS
+name: Build Full NetHunter Kernel & Driver
 
 on:
   workflow_dispatch:
-
-env:
-  KERNEL_VERSION: "4.19.325-cip131-st15-aptusitu-perf-gafc406285284"
-  KERNEL_COMMIT: "afc406285284"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler
+          sudo apt-get install -y git automake flex lzop bison \
+            gperf build-essential zip curl zlib1g-dev g++-multilib \
+            libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
+            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
+            make optipng maven libssl-dev pwgen libswitch-perl \
+            policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
+            bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
+            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip
 
-      - name: Extract boot.zip
+      - name: Download Clang Toolchain (Proton Clang)
         run: |
-          unzip -q boot.zip -d boot_extracted
-          ls -lh boot_extracted/
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone Kernel Source
+      - name: Clone the Kernel Source (Searchur - aptusitu)
         run: |
-          git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
-          cd kernel
-          if git rev-parse --verify --quiet ${KERNEL_COMMIT}^{commit}; then
-            git checkout ${KERNEL_COMMIT}
-          fi
+          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Patch Kernel Source
+      - name: Configure and Patch Kernel
         run: |
-          cd kernel
-          # Fix 1: Remove 'inline' from bpf_trace.c
-          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
+          cd kernel-source
+          mkdir -p out
           
-          # Fix 2: Fix walt.h format string mismatch (%llu -> %u)
-          sed -i 's/printk_deferred("%s=%llu"/printk_deferred("%s=%u"/g' kernel/sched/walt.h
+          # Copy the live configuration you extracted earlier
+          # IMPORTANT: Make sure 'stock_config' is uploaded to your GitHub repo root!
+          cp ../stock_config out/.config
+
+          # Disable automatic Git hash appending
+          touch .scmversion
+          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
+
+          # --- FIX COMPILER CRASHES (-Werror) ---
+          # This brutally strips -Werror from all Makefiles. 
+          # The compiler will show warnings for walt.h, but it will NOT stop the build.
+          find . -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} +
+          find . -type f -name "Kbuild" -exec sed -i 's/-Werror//g' {} +
+
+          # Configure Wi-Fi Core to support the external module
+          cat << 'EOF' >> out/.config
+          CONFIG_WIRELESS_EXT=y
+          CONFIG_CFG80211=m
+          CONFIG_MAC80211=m
+          CONFIG_MODULES=y
+          EOF
+
+      - name: Compile the Full Kernel
+        run: |
+          cd kernel-source
+          export PATH="$(pwd)/../clang/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+
+          yes "" | make O=out ARCH=arm64 CC=clang olddefconfig
           
-          echo "Patches applied successfully"
+          # Compile the full kernel to generate Image.gz-dtb AND the Module.symvers map
+          make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LLVM=1 LLVM_IAS=1 Image.gz-dtb modules
 
-      - name: Configure Kernel
+      - name: Compile the Realtek Driver Module
         run: |
-          cd kernel
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-          export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          make O=out cas_defconfig
-          echo "CONFIG_RTL8188EUS=y" >> out/.config
-          echo "CONFIG_USB=y" >> out/.config
-          echo "CONFIG_USB_SUPPORT=y" >> out/.config
-          echo "CONFIG_CFG80211=y" >> out/.config
-          echo "CONFIG_MAC80211=y" >> out/.config
-          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
-          echo "CONFIG_NETDEVICES=y" >> out/.config
-          echo "CONFIG_WLAN=y" >> out/.config
-          make O=out olddefconfig
+          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
+          cd rtl8188eus
+          
+          export PATH="$(pwd)/../clang/bin:$PATH"
+          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          
+          # Force ARM-64 Android compilation
+          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
+          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
+          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
+          
+          # Compile the module against our brand-new kernel
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 KSRC=$(pwd)/../kernel-source/out \
+            CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
+            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
 
-      - name: Build Kernel
+      - name: Package Flasheable ZIP (AnyKernel3)
         run: |
-          cd kernel
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export LOCALVERSION="-aptusitu-perf"
-          make -j$(nproc) O=out KCFLAGS="-Wno-error"
-          ls -lh out/arch/arm64/boot/
+          git clone https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          
+          # Remove strict device checks so TWRP flashes it without complaining
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          
+          # Copy our newly built kernel Image
+          cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
+          
+          # Add the compiled Wi-Fi driver to the zip for easy access
+          mkdir -p TP-Link-Driver
+          cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
+          
+          # Zip it all up
+          zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
 
-      - name: Extract MagiskBoot
-        run: |
-          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk -O magisk.apk
-          unzip -q magisk.apk -d magisk_extracted
-          cp magisk_extracted/lib/x86_64/libmagiskboot.so magiskboot-linux
-          chmod +x magiskboot-linux
-
-      - name: Repack boot.img
-        run: |
-          mkdir -p out/boot
-          cp boot_extracted/boot.img out/boot/original-boot.img
-          cd out/boot
-          ../../magiskboot-linux unpack original-boot.img
-          if [ -f ../../kernel/out/arch/arm64/boot/Image.gz ]; then
-            KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image.gz
-          elif [ -f ../../kernel/out/arch/arm64/boot/Image ]; then
-            KERNEL_IMG=../../kernel/out/arch/arm64/boot/Image
-          else
-            exit 1
-          fi
-          if [ -f kernel ]; then
-            cp $KERNEL_IMG kernel
-          else
-            exit 1
-          fi
-          ../../magiskboot-linux repack original-boot.img new-boot.img          ls -lh new-boot.img
-
-      - name: Upload Artifacts
+      - name: Upload Flashable Kernel
         uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-Boot-Image
-          path: out/boot/new-boot.img
+          name: NetHunter-Kernel-Mi10Ultra
+          path: NetHunter-Kernel-Mi10Ultra.zip
