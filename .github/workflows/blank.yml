@@ -35,10 +35,8 @@ jobs:
           cd kernel-source
           mkdir -p out
           
-          # Copy the live configuration you extracted earlier
           cp ../stock_config out/.config
 
-          # Disable automatic Git hash appending
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
 
@@ -51,7 +49,6 @@ jobs:
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
 
           # Configure Wi-Fi Core Subsystems statically (=y) instead of modules (=m)
-          # This ensures built-in drivers can resolve wireless symbols cleanly during vmlinux linking
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
           CONFIG_CFG80211=y
@@ -68,8 +65,6 @@ jobs:
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
 
           yes "" | make $MAKE_ARGS olddefconfig
-          
-          # Compile the full kernel safely
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
 
       - name: Compile the Realtek Driver Module
@@ -80,15 +75,19 @@ jobs:
           export PATH="$(pwd)/../clang/bin:$PATH"
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
           
-          # Force ARM-64 Android compilation
+          # Force ARM-64 Android compilation parameters
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
           
-          # Compile the module against our brand-new kernel layout setup
-          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 KSRC=$(pwd)/../kernel-source/out \
+          # FIX: Force module compilation to use identical LLVM/Clang parameters as the core kernel
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 \
+            KSRC=$(pwd)/../kernel-source/out \
             CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
+          
+          # FIX: Strip massive unneeded debug info to normalize binary size and structure
+          aarch64-linux-gnu-strip --strip-debug 8188eu.ko
 
       - name: Package Flasheable ZIP (AnyKernel3)
         run: |
@@ -96,8 +95,9 @@ jobs:
           cd AnyKernel3
           
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
+          sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
+          cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           mkdir -p TP-Link-Driver
           cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
           
