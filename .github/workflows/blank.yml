@@ -50,11 +50,12 @@ jobs:
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
 
-          # Configure Wi-Fi Core to support the external module
+          # Configure Wi-Fi Core Subsystems statically (=y) instead of modules (=m)
+          # This ensures built-in drivers can resolve wireless symbols cleanly during vmlinux linking
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=m
-          CONFIG_MAC80211=m
+          CONFIG_CFG80211=y
+          CONFIG_MAC80211=y
           CONFIG_MODULES=y
           EOF
 
@@ -64,13 +65,11 @@ jobs:
           export PATH="$(pwd)/../clang/bin:$PATH"
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
-          # Unify all arguments so olddefconfig and make match perfectly
-          # Added -Wno-unknown-warning-option to silence the massive wall of fake errors
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
 
           yes "" | make $MAKE_ARGS olddefconfig
           
-          # Compile the full kernel cleanly
+          # Compile the full kernel safely
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
 
       - name: Compile the Realtek Driver Module
@@ -86,7 +85,7 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
           
-          # Compile the module against our brand-new kernel
+          # Compile the module against our brand-new kernel layout setup
           make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 KSRC=$(pwd)/../kernel-source/out \
             CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
