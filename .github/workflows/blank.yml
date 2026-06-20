@@ -48,10 +48,10 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           
-          # FIX: Forcefully silence all warnings that Clang 13 elevates to errors inside the driver
+          # FIX: Hardcode the vital Wi-Fi structure definitions and safety flags directly into the driver!
           sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
-          echo 'ccflags-y += -Wno-error -Wno-unknown-warning-option -Wno-incompatible-pointer-types' >> Makefile
-          echo 'EXTRA_CFLAGS += -Wno-error -Wno-unknown-warning-option -Wno-incompatible-pointer-types' >> Makefile
+          echo 'EXTRA_CFLAGS += -DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef' >> Makefile
+          echo 'ccflags-y += -DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef' >> Makefile
 
       - name: Configure and Patch Kernel
         run: |
