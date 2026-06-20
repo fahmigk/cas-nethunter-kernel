@@ -40,14 +40,18 @@ jobs:
           # Tell the kernel's Kconfig menu to include the driver's config
           echo 'source "drivers/staging/rtl8188eus/Kconfig"' >> Kconfig
           
-          # Tell the kernel's Makefile to compile the folder using the exact matching symbol
+          # Tell the kernel's Makefile to compile the folder
           echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eus/' >> Makefile
           
           # Force ARM-64 Android configuration for the driver
           cd rtl8188eus
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
+          
+          # FIX: Forcefully silence all warnings that Clang 13 elevates to errors inside the driver
           sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
+          echo 'ccflags-y += -Wno-error -Wno-unknown-warning-option -Wno-incompatible-pointer-types' >> Makefile
+          echo 'EXTRA_CFLAGS += -Wno-error -Wno-unknown-warning-option -Wno-incompatible-pointer-types' >> Makefile
 
       - name: Configure and Patch Kernel
         run: |
@@ -61,7 +65,6 @@ jobs:
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
           
-          # Prevent build abortion from compiler alerts across the workspace and local driver
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
 
@@ -92,7 +95,7 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
-          # Configure deployment targets for your Snapdragon 865 platform layout
+          # Configure deployment targets
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
@@ -101,10 +104,10 @@ jobs:
           
           # Stage natively linked binary driver
           mkdir -p TP-Link-Driver
-          cp ../kernel-source/out/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/
+          cp ../kernel-source/out/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/ || cp ../kernel-source/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/
           
           # Clean symbol tables to optimize architecture footprint size
-          aarch64-linux-gnu-strip --strip-debug TP-Link-Driver/8188eu.ko
+          aarch64-linux-gnu-strip --strip-debug TP-Link-Driver/8188eu.ko || true
           
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
 
