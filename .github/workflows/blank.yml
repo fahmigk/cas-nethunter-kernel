@@ -30,6 +30,25 @@ jobs:
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
+      - name: Inject TP-Link Driver into Kernel Tree (YouTube Method)
+        run: |
+          cd kernel-source/drivers/staging
+          
+          # Clone the adapter code straight into the kernel's staging folder
+          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git
+          
+          # Tell the kernel's Kconfig menu to include the driver's config
+          sed -i '/endif # STAGING/i source "drivers/staging/rtl8188eus/Kconfig"' Kconfig
+          
+          # Tell the kernel's Makefile to compile the folder using the exact aircrack-ng variable
+          echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eus/' >> Makefile
+          
+          # Force ARM-64 Android configuration for the driver
+          cd rtl8188eus
+          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
+          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
+          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
+
       - name: Configure and Patch Kernel
         run: |
           cd kernel-source
@@ -39,24 +58,21 @@ jobs:
 
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
-
-          # --- FIX NETPRIO CGROUP BUG ---
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
-
-          # --- FIX COMPILER CRASHES Safely ---
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
 
-          # Configure Wi-Fi Core Subsystems statically (=y) instead of modules (=m)
+          # Enable Wi-Fi Core and instruct the kernel to build our new internal module
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
           CONFIG_MODULES=y
+          CONFIG_RTL8188EU=m
           EOF
 
-      - name: Compile the Full Kernel
+      - name: Compile the Unified Kernel
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
@@ -65,41 +81,28 @@ jobs:
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
 
           yes "" | make $MAKE_ARGS olddefconfig
+          
+          # The kernel will automatically compile the driver module organically alongside itself
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
-
-      - name: Compile the Realtek Driver Module
-        run: |
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
-          cd rtl8188eus
-          
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-          
-          # Force ARM-64 Android compilation parameters
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
-          
-          # FIX: Force module compilation to use identical LLVM/Clang parameters as the core kernel
-          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 \
-            KSRC=$(pwd)/../kernel-source/out \
-            CONFIG_PLATFORM_I386_PC=n CONFIG_PLATFORM_ARM_AARCH64=y \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef"
-          
-          # FIX: Strip massive unneeded debug info to normalize binary size and structure
-          aarch64-linux-gnu-strip --strip-debug 8188eu.ko
 
       - name: Package Flasheable ZIP (AnyKernel3)
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
+          # Bypass device code checks and set modern boot block path
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
+          # Copy kernel image
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
+          
+          # Copy the natively compiled driver module from its new internal location
           mkdir -p TP-Link-Driver
-          cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
+          cp ../kernel-source/out/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/ || cp ../kernel-source/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/
+          
+          # Strip debug bloat to ensure tiny file size
+          aarch64-linux-gnu-strip --strip-debug TP-Link-Driver/8188eu.ko || true
           
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
 
