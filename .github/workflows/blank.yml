@@ -30,7 +30,7 @@ jobs:
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Inject TP-Link Driver into Kernel Tree (YouTube Method)
+      - name: Inject TP-Link Driver into Kernel Tree
         run: |
           cd kernel-source/drivers/staging
           
@@ -38,9 +38,9 @@ jobs:
           git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git
           
           # Tell the kernel's Kconfig menu to include the driver's config
-          sed -i '/endif # STAGING/i source "drivers/staging/rtl8188eus/Kconfig"' Kconfig
+          echo 'source "drivers/staging/rtl8188eus/Kconfig"' >> Kconfig
           
-          # Tell the kernel's Makefile to compile the folder using the exact aircrack-ng variable
+          # Tell the kernel's Makefile to compile the folder using the exact matching symbol
           echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eus/' >> Makefile
           
           # Force ARM-64 Android configuration for the driver
@@ -60,10 +60,12 @@ jobs:
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
+          
+          # Prevent build abortion from compiler alerts across the workspace and local driver
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
 
-          # Enable Wi-Fi Core and instruct the kernel to build our new internal module
+          # Enable Wi-Fi Core infrastructure and define driver target flag
           cat << 'EOF' >> out/.config
           CONFIG_WIRELESS_EXT=y
           CONFIG_CFG80211=y
@@ -82,7 +84,7 @@ jobs:
 
           yes "" | make $MAKE_ARGS olddefconfig
           
-          # The kernel will automatically compile the driver module organically alongside itself
+          # Compiles everything together cleanly
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
 
       - name: Package Flasheable ZIP (AnyKernel3)
@@ -90,19 +92,19 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
-          # Bypass device code checks and set modern boot block path
+          # Configure deployment targets for your Snapdragon 865 platform layout
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
-          # Copy kernel image
+          # Copy system image
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           
-          # Copy the natively compiled driver module from its new internal location
+          # Stage natively linked binary driver
           mkdir -p TP-Link-Driver
-          cp ../kernel-source/out/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/ || cp ../kernel-source/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/
+          cp ../kernel-source/out/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/
           
-          # Strip debug bloat to ensure tiny file size
-          aarch64-linux-gnu-strip --strip-debug TP-Link-Driver/8188eu.ko || true
+          # Clean symbol tables to optimize architecture footprint size
+          aarch64-linux-gnu-strip --strip-debug TP-Link-Driver/8188eu.ko
           
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
 
