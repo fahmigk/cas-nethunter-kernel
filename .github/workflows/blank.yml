@@ -1,4 +1,4 @@
-name: Build Full NetHunter Kernel & Driver
+name: Build NetHunter Kernel (ReSukiSU - cas)
 
 on:
   workflow_dispatch:
@@ -26,93 +26,127 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone the Kernel Source (Searchur - aptusitu)
+      - name: Clone Kernel Source (aptusitu branch)
         run: |
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+          # Cloning the base kernel without submodules so we can manually replace the root engine
+          git clone --depth=1 -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Inject TP-Link Driver into Kernel Tree
+      - name: Inject Official ReSukiSU Source
         run: |
-          cd kernel-source/drivers/staging
+          cd kernel-source
           
-          # Clone the adapter code straight into the kernel's staging folder
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git
+          # 1. Delete the mismatched/outdated SukiSU engine from the Searchur repository
+          rm -rf KernelSU
+          rm -rf drivers/kernelsu
           
-          # Tell the kernel's Kconfig menu to include the driver's config
-          echo 'source "drivers/staging/rtl8188eus/Kconfig"' >> Kconfig
-          
-          # Tell the kernel's Makefile to compile the folder
-          echo 'obj-$(CONFIG_RTL8188EU) += rtl8188eus/' >> Makefile
-          
-          # Force ARM-64 Android configuration for the driver
-          cd rtl8188eus
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          
-          # FIX: Hardcode the vital Wi-Fi structure definitions and safety flags directly into the driver!
-          sed -i 's/EXTRA_CFLAGS += -Werror/# EXTRA_CFLAGS += -Werror/g' Makefile
-          echo 'EXTRA_CFLAGS += -DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef' >> Makefile
-          echo 'ccflags-y += -DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef' >> Makefile
+          # 2. Forcefully download the official ReSukiSU engine from the exact repository you linked
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
 
-      - name: Configure and Patch Kernel
+      - name: Inject NetHunter & Root Drivers into Stock Config
         run: |
           cd kernel-source
           mkdir -p out
           
+          # Pull your proven working configuration from the repository
           cp ../stock_config out/.config
 
-          touch .scmversion
-          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
+          # --- FIX FOR CGROUP COMPILATION BUG ---
+          sed -i 's/CONFIG_CGROUP_NET_PRIO=y/# CONFIG_CGROUP_NET_PRIO is not set/g' out/.config
+          sed -i 's/CONFIG_CGROUP_NET_CLASSID=y/# CONFIG_CGROUP_NET_CLASSID is not set/g' out/.config
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
           
-          find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
+          # --- FORCE NON-GKI MANUAL HOOK (Fixes Seccomp Crash) ---
+          sed -i 's/CONFIG_KPROBES=y/# CONFIG_KPROBES is not set/g' out/.config
+          sed -i 's/CONFIG_HAVE_KPROBES=y/# CONFIG_HAVE_KPROBES is not set/g' out/.config
+          sed -i 's/CONFIG_KPROBE_EVENTS=y/# CONFIG_KPROBE_EVENTS is not set/g' out/.config
+          sed -i 's/CONFIG_KPROBES_QGKI=y/# CONFIG_KPROBES_QGKI is not set/g' out/.config
+          
+          echo "Injecting Root and NetHunter configurations into your proven stock config..."
 
-          # Enable Wi-Fi Core infrastructure and define driver target flag
           cat << 'EOF' >> out/.config
-          CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=y
-          CONFIG_MAC80211=y
-          CONFIG_MODULES=y
+          # --- ReSukiSU Official Non-GKI Hook ---
+          CONFIG_KSU=y
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KPM=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
+
+          # --- NetHunter Core ---
+          CONFIG_SYSVIPC=y
+          CONFIG_SYSVIPC_SYSCTL=y
+          CONFIG_MAC80211_INJECTION=y
+          
+          # --- NetHunter USB / HID ---
+          CONFIG_USB_CONFIGFS_F_HID=y
+          CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+          CONFIG_USB_CONFIGFS_F_FS=y
+          CONFIG_HID_APPLE=y
+          CONFIG_HID_MAGICMOUSE=y
+          CONFIG_HID_MICROSOFT=y
+          CONFIG_HID_MULTITOUCH=y
+          
+          # --- NetHunter Wi-Fi Drivers ---
+          CONFIG_WLAN_VENDOR_ATH=y
+          CONFIG_ATH_COMMON=m
+          CONFIG_ATH_CARDS=m
+          CONFIG_ATH9K=m
+          CONFIG_ATH9K_HTC=m
+          CONFIG_WLAN_VENDOR_RALINK=y
+          CONFIG_RT2X00=m
+          CONFIG_RT2800USB=m
+          CONFIG_WLAN_VENDOR_MEDIATEK=y
+          CONFIG_MT7601U=m
+          CONFIG_WLAN_VENDOR_REALTEK=y
+          CONFIG_RTL818X=m
+          CONFIG_RTL8187=m
           CONFIG_RTL8188EU=m
+          CONFIG_RTL8192CU=m
+          CONFIG_RTL8XXXU=m
           EOF
 
-      - name: Compile the Unified Kernel
+      - name: Compile the Kernel
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
 
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
-
-          yes "" | make $MAKE_ARGS olddefconfig
+          # Safely apply the injected NetHunter config over your stock base
+          make O=out ARCH=arm64 CC=clang olddefconfig
           
-          # Compiles everything together cleanly
-          make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
+          # Execute build
+          make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LLVM=1 LLVM_IAS=1 Image.gz-dtb
 
-      - name: Package Flasheable ZIP (AnyKernel3)
+      - name: Package with AnyKernel3
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
+          git clone https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           cd AnyKernel3
+          rm -rf .git
           
-          # Configure deployment targets
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          sed -i 's/kernel.string=.*/kernel.string=NetHunter-ReSukiSU-cas/g' anykernel.sh
+          sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
           
-          # Copy system image
-          cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
+          sed -i 's|block=[^;]*;|BLOCK=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
+          sed -i 's|BLOCK=[^;]*;|BLOCK=/dev/block/bootdevice/by-name/boot;|g' anykernel.sh
           
-          # Stage natively linked binary driver
-          mkdir -p TP-Link-Driver
-          cp ../kernel-source/out/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/ || cp ../kernel-source/drivers/staging/rtl8188eus/8188eu.ko TP-Link-Driver/
-          
-          # Clean symbol tables to optimize architecture footprint size
-          aarch64-linux-gnu-strip --strip-debug TP-Link-Driver/8188eu.ko || true
-          
-          zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
+          sed -i 's/is_slot_device=[^;]*;/IS_SLOT_DEVICE=0;/g' anykernel.sh
+          sed -i 's/IS_SLOT_DEVICE=[^;]*;/IS_SLOT_DEVICE=0;/g' anykernel.sh
 
-      - name: Upload Flashable Kernel
+          cp ../kernel-source/out/arch/arm64/boot/Image* . || true
+          cp ../kernel-source/out/arch/arm64/boot/dtb* . || true
+
+          zip -r9 ../NetHunter-Kernel-cas.zip *
+
+      - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-Kernel-Mi10Ultra
-          path: NetHunter-Kernel-Mi10Ultra.zip
+          name: NetHunter-ReSukiSU-cas
+          path: NetHunter-Kernel-cas.zip
