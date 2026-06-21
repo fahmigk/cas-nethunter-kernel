@@ -1,98 +1,3 @@
-name: Build Full NetHunter Kernel & Driver
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Install Build Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git automake flex lzop bison \
-            gperf build-essential zip curl zlib1g-dev g++-multilib \
-            libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
-            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
-            make optipng maven libssl-dev pwgen libswitch-perl \
-            policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
-            bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip
-
-      - name: Download Clang Toolchain (Proton Clang)
-        run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
-
-      - name: Clone the Kernel Source (Searchur - aptusitu)
-        run: |
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
-
-      - name: Configure and Patch Kernel
-        run: |
-          cd kernel-source
-          mkdir -p out
-          
-          # Copy your custom ROM's base configuration
-          cp ../stock_config out/.config
-
-          touch .scmversion
-          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
-
-          # --- FIX NETPRIO CGROUP BUG ---
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
-
-          # --- FIX COMPILER CRASHES Safely ---
-          find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-
-          # Configure Android Wi-Fi Core Subsystems so the driver can connect to the system
-          cat << 'EOF' >> out/.config
-          CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=y
-          CONFIG_MAC80211=y
-          CONFIG_MODULES=y
-          EOF
-
-      - name: Compile the Full Kernel (DO NOT MODIFY)
-        run: |
-          cd kernel-source
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-
-          # Set strict compiler arguments
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
-
-          # The 'yes' command is MANDATORY here to prevent the config from erasing ReSukiSU
-          yes "" | make $MAKE_ARGS olddefconfig
-          
-          # Compile the main kernel and prepare modules
-          make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
-
-      - name: Compile the Realtek Driver Module (Out-of-Tree)
-        run: |
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
-          cd rtl8188eus
-          
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-          
-          # Force ARM-64 Android compilation parameters
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          
-          # FIX: Forcefully pass CC=clang and LLVM=1 straight to the make command so it cannot fall back to GCC!
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 \
-            KSRC=$(pwd)/../kernel-source/out \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
-            modules
-          
-          # Use LLVM-Strip to shrink the file size without corrupting it
-          llvm-strip --strip-debug 8188eu.ko
-
       - name: Package Flasheable ZIP (AnyKernel3)
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
@@ -105,9 +10,15 @@ jobs:
           # Copy the newly built custom kernel
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           
-          # Copy the newly built Wi-Fi driver
+          # Create the driver folder
           mkdir -p TP-Link-Driver
+          
+          # Copy your custom adapter driver
           cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
+          
+          # FIX: Rescue the Android Wi-Fi Core modules from the build server!
+          find ../kernel-source/out -type f -name "cfg80211.ko" -exec cp {} TP-Link-Driver/ \;
+          find ../kernel-source/out -type f -name "mac80211.ko" -exec cp {} TP-Link-Driver/ \;
           
           # Create the final TWRP-flashable zip
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
