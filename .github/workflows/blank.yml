@@ -1,10 +1,7 @@
-name: Build Mi10 Ultra NetHunter Release
+name: Build Mi10Ultra (cas) NetHunter Kernel - AnyKernel3
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -16,104 +13,131 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git automake flex lzop bison \
-            gperf build-essential zip curl zlib1g-dev g++-multilib \
-            libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
-            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
-            make optipng maven libssl-dev pwgen libswitch-perl \
-            policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
-            bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler kmod
 
-      - name: Download Clang Toolchain (Proton Clang)
+      - name: Clone Kernel Source & AnyKernel3
         run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          git clone --depth=1 https://github.com/AstideLabs/android_kernel_xiaomi_sm8250.git kernel
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          echo "Sources cloned successfully."
 
-      - name: Clone the Kernel Source (Searchur - aptusitu)
+      - name: Patch Kernel Source for Modern Compilers
         run: |
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+          cd kernel
+          # Fix 1: Remove 'inline' from bpf_trace.c (varargs + inline = hard error on GCC11+/Clang14+)
+          if [ -f "kernel/trace/bpf_trace.c" ]; then
+            sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
+            echo "Patched bpf_trace.c"
+          fi
+          
+          # Fix 2: Disable -Werror globally to bypass walt.h format mismatch warnings
+          sed -i 's/-Werror//g' Makefile
+          sed -i 's/-Werror//g' scripts/Makefile.build
+          echo "Disabled -Werror in Makefiles"
 
-      - name: Configure and Patch Kernel
+      - name: Configure Kernel (ReSukiSU + NetHunter WiFi + Android 16)
         run: |
-          cd kernel-source
-          mkdir -p out
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Copy your custom ROM's base configuration
-          cp ../stock_config out/.config
+          # Locate correct defconfig for cas
+          DEFCONFIG="cas_defconfig"
+          if [ -f "arch/arm64/configs/vendor/cas_defconfig" ]; then
+            DEFCONFIG="vendor/cas_defconfig"          elif [ -f "arch/arm64/configs/cas_defconfig" ]; then
+            DEFCONFIG="cas_defconfig"
+          else
+            DEFCONFIG="sm8250_defconfig"
+          fi
+          echo "Using defconfig: $DEFCONFIG"
           
-          touch .scmversion
-          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
+          make O=out $DEFCONFIG
           
-          # --- FIX NETPRIO CGROUP BUG ---
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
+          # Force ReSukiSU / KernelSU support
+          echo "CONFIG_KSU=y" >> out/.config
+          echo "CONFIG_KPROBES=y" >> out/.config
+          echo "CONFIG_HAVE_KPROBES=y" >> out/.config
+          echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
+          echo "CONFIG_BPF=y" >> out/.config
+          echo "CONFIG_BPF_SYSCALL=y" >> out/.config
           
-          # --- FIX COMPILER CRASHES ---
-          find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
+          # Enable comprehensive NetHunter WiFi drivers (built-in for Android 16 compatibility)
+          echo "CONFIG_CFG80211=y" >> out/.config
+          echo "CONFIG_MAC80211=y" >> out/.config
+          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
+          echo "CONFIG_WEXT_CORE=y" >> out/.config
+          echo "CONFIG_WEXT_PROC=y" >> out/.config
           
-          # FUSE the Wi-Fi Core directly into the kernel (-e) so it never unloads
-          ./scripts/config --file out/.config -e CONFIG_MODULES
-          ./scripts/config --file out/.config -e CONFIG_WIRELESS
-          ./scripts/config --file out/.config -e CONFIG_WIRELESS_EXT
-          ./scripts/config --file out/.config -e CONFIG_CFG80211
-          ./scripts/config --file out/.config -e CONFIG_MAC80211
+          # Realtek USB Adapters
+          echo "CONFIG_RTL8188EUS=y" >> out/.config
+          echo "CONFIG_RTL8188FU=y" >> out/.config
+          echo "CONFIG_RTL8192CU=y" >> out/.config
+          echo "CONFIG_RTL8192EU=y" >> out/.config
+          echo "CONFIG_RTL8723BU=y" >> out/.config
+          echo "CONFIG_RTL8812AU=y" >> out/.config
+          echo "CONFIG_RTL8821AU=y" >> out/.config
+          echo "CONFIG_RTL88X2BU=y" >> out/.config
+          
+          # MediaTek USB Adapters
+          echo "CONFIG_MT7601U=y" >> out/.config
+          echo "CONFIG_MT76X2U=y" >> out/.config
+          echo "CONFIG_MT7663U=y" >> out/.config
+          
+          # Atheros USB Adapters
+          echo "CONFIG_ATH9K_HTC=y" >> out/.config
+          
+          # Android 16 Compatibility Flags
+          echo "CONFIG_ANDROID=y" >> out/.config
+          echo "CONFIG_ANDROID_BINDER_IPC=y" >> out/.config
+          echo "CONFIG_ASHMEM=y" >> out/.config
+          echo "CONFIG_NAMESPACES=y" >> out/.config
+          echo "CONFIG_NET_NS=y" >> out/.config
+          
+          # Apply and clean config          make O=out olddefconfig
+          echo "=== Final Config Verification ==="
+          grep -E "CONFIG_KSU|CONFIG_RTL8812AU|CONFIG_MT7601U|CONFIG_ATH9K_HTC|CONFIG_CFG80211" out/.config || true
 
-      - name: Compile the Full Kernel
+      - name: Build Kernel Image & DTBO
         run: |
-          cd kernel-source
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
+          # Build with flags to suppress harmless format/unused warnings
+          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format -Wno-unused-variable" Image.gz dtbo.img
           
-          yes "" | make $MAKE_ARGS olddefconfig
-          make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
+          echo "Build finished successfully!"
+          ls -lh out/arch/arm64/boot/
 
-      - name: Compile the Realtek Driver Module
+      - name: Package AnyKernel3 ZIP
         run: |
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
-          cd rtl8188eus
+          cd anykernel
           
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          # Configure AnyKernel3 for Mi 10 Ultra (cas)
+          sed -i 's/device.name1=.*/device.name1=cas/' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=mi10ultra/' anykernel.sh
+          sed -i 's/do.devicecheck=0/do.devicecheck=1/' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/' anykernel.sh
+          sed -i 's/is_slot_device=0/is_slot_device=auto/' anykernel.sh
           
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
+          # Copy compiled kernel files
+          cp ../kernel/out/arch/arm64/boot/Image.gz .
+          cp ../kernel/out/arch/arm64/boot/dtbo.img .
           
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 \
-            KSRC=$(pwd)/../kernel-source/out \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
-            modules
-          
-          llvm-strip --strip-debug 8188eu.ko
+          # Create flashable ZIP
+          zip -r9 ../NetHunter-Kernel-cas-AnyKernel3.zip . -x .git README.md .gitignore
+          echo "AnyKernel3 ZIP created successfully!"
+          ls -lh ../NetHunter-Kernel-cas-AnyKernel3.zip
 
-      - name: Package Flasheable ZIP (AnyKernel3)
-        run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          cd AnyKernel3
-          
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
-          
-          cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
-          
-          mkdir -p TP-Link-Driver
-          cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
-          
-          zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Flashable ZIP
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: "Mi10Ultra-NetHunter-${{ github.run_id }}"
-          name: "Mi 10 Ultra Custom NetHunter Kernel"
-          body: |
-            Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).
-            Includes FUSED Wi-Fi Core (`cfg80211`) and external RTL8188EUS driver for Kali NetHunter.
-            Build ID: ${{ github.run_id }}
-          draft: false
-          prerelease: false
-          files: NetHunter-Kernel-Mi10Ultra.zip
+          name: NetHunter-Kernel-cas-AnyKernel3
+          path: NetHunter-Kernel-cas-AnyKernel3.zip
+          retention-days: 30
