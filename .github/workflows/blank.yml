@@ -15,37 +15,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler
 
-      - name: Clone Kernel Source
+      - name: Clone Kernel Source & AnyKernel3
         run: |
-          git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
-          cd kernel
-          git checkout afc406285284 || true
+          git clone --depth=1 https://github.com/AstideLabs/android_kernel_xiaomi_sm8250.git kernel
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
 
-      - name: Patch Kernel Source (Fix All Compiler Errors)
+      - name: Patch Kernel Source (Fix Build Errors Safely)
         run: |
           cd kernel
-          # Fix 1: Remove 'inline' from bpf_trace.c to fix Clang varargs error
-          sed -i '/bpf_do_trace_printk/s/inline //g' kernel/trace/bpf_trace.c
           
-          # Fix 2: Disable -Werror globally to prevent walt.h format warnings from failing the build
-          find . -name "Makefile*" -exec sed -i 's/-Werror//g' {} \;
-          find . -name "*.mk" -exec sed -i 's/-Werror//g' {} \;
+          # Fix 1: bpf_trace.c inline varargs hard error
+          if [ -f "kernel/trace/bpf_trace.c" ]; then
+            sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
+            echo "Patched bpf_trace.c"
+          fi
           
-          # Fix 3: Fix the invalid compiler flag typo in Makefiles
-          find . -name "Makefile*" -exec sed -i 's/-implicit-function-declaration/-Wimplicit-function-declaration/g' {} \;
-          find . -name "*.mk" -exec sed -i 's/-implicit-function-declaration/-Wimplicit-function-declaration/g' {} \;
-          
-          echo "All patches applied successfully"
-
-      - name: Clone External WiFi Drivers
-        run: |
-          cd kernel/drivers/net/wireless/
-          git clone --depth=1 https://github.com/aircrack-ng/rtl8188eus.git || true
-          git clone --depth=1 https://github.com/aircrack-ng/rtl8812au.git || true
-          echo 'obj-$(CONFIG_RTL8188EUS) += rtl8188eus/' >> Makefile
-          echo 'obj-$(CONFIG_RTL8812AU) += rtl8812au/' >> Makefile
-          echo 'source "drivers/net/wireless/rtl8188eus/Kconfig"' >> Kconfig
-          echo 'source "drivers/net/wireless/rtl8812au/Kconfig"' >> Kconfig
+          # Fix 2: Safely disable -Werror by replacing it with -Wno-error
+          # This prevents breaking flags like -Werror=return-type into =return-type
+          find . -type f \( -name "Makefile*" -o -name "*.mk" \) -exec sed -i 's/-Werror/-Wno-error/g' {} +
+          echo "Safely disabled -Werror across all Makefiles"
 
       - name: Configure Kernel
         run: |
@@ -56,17 +44,31 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          make O=out cas_defconfig
+          # Find the correct defconfig for cas / sm8250
+          if [ -f "arch/arm64/configs/cas_defconfig" ]; then
+            DEFCONFIG="cas_defconfig"
+          elif [ -f "arch/arm64/configs/sm8250_defconfig" ]; then            DEFCONFIG="sm8250_defconfig"
+          else
+            DEFCONFIG=$(ls arch/arm64/configs/ | grep -iE 'cas|sm8250' | head -n 1)
+          fi
+          echo "Using defconfig: $DEFCONFIG"
           
-          # Enable ReSukisu / KernelSU
+          make O=out $DEFCONFIG
+          
+          # Enable ReSukiSU / KernelSU
           echo "CONFIG_KSU=y" >> out/.config
           echo "CONFIG_KPROBES=y" >> out/.config
           echo "CONFIG_HAVE_KPROBES=y" >> out/.config
           echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
           
-          # Enable WiFi Drivers (Built as modules so you can choose which to load)
+          # Enable NetHunter WiFi Drivers (Built as modules)
           echo "CONFIG_RTL8188EUS=m" >> out/.config
           echo "CONFIG_RTL8812AU=m" >> out/.config
+          echo "CONFIG_RTL88X2BU=m" >> out/.config
+          echo "CONFIG_MT76X2U=m" >> out/.config
+          echo "CONFIG_ATH9K_HTC=m" >> out/.config
+          
+          # Enable Wireless core
           echo "CONFIG_CFG80211=y" >> out/.config
           echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
@@ -82,24 +84,26 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Build Image and Modules with warnings suppressed
-          make -j$(nproc) O=out KCFLAGS="-Wno-error" Image.gz modules
+          # Build Image and Modules
+          make -j$(nproc) O=out Image.gz modules
+          
+          echo "Build finished successfully!"
           ls -lh out/arch/arm64/boot/
 
       - name: Setup AnyKernel3
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git anykernel
           cd anykernel
           # Configure for Mi 10 Ultra (cas)
           sed -i 's/do.devicecheck=0/do.devicecheck=1/g' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=mi10ultra/g' anykernel.sh
-          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=mi10ultra/g' anykernel.sh          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=0/is_slot_device=auto/g' anykernel.sh
           rm -rf .git
+
       - name: Package AnyKernel3 Zip
         run: |
           cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+          
           # Copy compiled WiFi modules into AnyKernel3
           mkdir -p anykernel/system/lib/modules/
           find kernel/out -name "*.ko" -exec cp {} anykernel/system/lib/modules/ \;
