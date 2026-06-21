@@ -20,20 +20,12 @@ jobs:
           git clone --depth=1 https://github.com/AstideLabs/android_kernel_xiaomi_sm8250.git kernel
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
 
-      - name: Patch Kernel Source (Fix Build Errors Safely)
+      - name: Patch Kernel Source
         run: |
           cd kernel
-          
-          # Fix 1: bpf_trace.c inline varargs hard error
-          if [ -f "kernel/trace/bpf_trace.c" ]; then
-            sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-            echo "Patched bpf_trace.c"
-          fi
-          
-          # Fix 2: Safely disable -Werror by replacing it with -Wno-error
-          # This prevents breaking flags like -Werror=return-type into =return-type
-          find . -type f \( -name "Makefile*" -o -name "*.mk" \) -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          echo "Safely disabled -Werror across all Makefiles"
+          # Fix the Clang inline varargs hard error safely
+          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
+          echo "Patched bpf_trace.c successfully"
 
       - name: Configure Kernel
         run: |
@@ -44,31 +36,18 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Find the correct defconfig for cas / sm8250
-          if [ -f "arch/arm64/configs/cas_defconfig" ]; then
-            DEFCONFIG="cas_defconfig"
-          elif [ -f "arch/arm64/configs/sm8250_defconfig" ]; then            DEFCONFIG="sm8250_defconfig"
-          else
-            DEFCONFIG=$(ls arch/arm64/configs/ | grep -iE 'cas|sm8250' | head -n 1)
-          fi
-          echo "Using defconfig: $DEFCONFIG"
+          make O=out cas_defconfig
           
-          make O=out $DEFCONFIG
-          
-          # Enable ReSukiSU / KernelSU
+          # Enable ReSukisu / KernelSU
           echo "CONFIG_KSU=y" >> out/.config
           echo "CONFIG_KPROBES=y" >> out/.config
-          echo "CONFIG_HAVE_KPROBES=y" >> out/.config
-          echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
           
-          # Enable NetHunter WiFi Drivers (Built as modules)
+          # Enable NetHunter WiFi Drivers
           echo "CONFIG_RTL8188EUS=m" >> out/.config
           echo "CONFIG_RTL8812AU=m" >> out/.config
           echo "CONFIG_RTL88X2BU=m" >> out/.config
           echo "CONFIG_MT76X2U=m" >> out/.config
           echo "CONFIG_ATH9K_HTC=m" >> out/.config
-          
-          # Enable Wireless core
           echo "CONFIG_CFG80211=y" >> out/.config
           echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
@@ -84,8 +63,8 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Build Image and Modules
-          make -j$(nproc) O=out Image.gz modules
+          # Build with Clang. KCFLAGS safely tells Clang to ignore format warnings and not treat warnings as errors.
+          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format" Image.gz modules
           
           echo "Build finished successfully!"
           ls -lh out/arch/arm64/boot/
@@ -93,10 +72,10 @@ jobs:
       - name: Setup AnyKernel3
         run: |
           cd anykernel
-          # Configure for Mi 10 Ultra (cas)
           sed -i 's/do.devicecheck=0/do.devicecheck=1/g' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=mi10ultra/g' anykernel.sh          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=mi10ultra/g' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=0/is_slot_device=auto/g' anykernel.sh
           rm -rf .git
 
@@ -104,7 +83,6 @@ jobs:
         run: |
           cp kernel/out/arch/arm64/boot/Image.gz anykernel/
           
-          # Copy compiled WiFi modules into AnyKernel3
           mkdir -p anykernel/system/lib/modules/
           find kernel/out -name "*.ko" -exec cp {} anykernel/system/lib/modules/ \;
           
