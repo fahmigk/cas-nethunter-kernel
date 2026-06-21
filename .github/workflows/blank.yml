@@ -37,34 +37,33 @@ jobs:
           
           # Copy your custom ROM's base configuration
           cp ../stock_config out/.config
-
+          
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
-
+          
           # --- FIX NETPRIO CGROUP BUG ---
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
-
+          
           # --- FIX COMPILER CRASHES Safely ---
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-
-          # FORCE Wi-Fi Core explicitly as Modules (=m) so they generate the required .ko files
-          cat << 'EOF' >> out/.config
-          CONFIG_WIRELESS_EXT=y
-          CONFIG_CFG80211=m
-          CONFIG_MAC80211=m
-          CONFIG_MODULES=y
-          EOF
+          
+          # Safely enforce Wi-Fi Core as Modules using the kernel's native tool
+          ./scripts/config --file out/.config -e CONFIG_MODULES
+          ./scripts/config --file out/.config -e CONFIG_WIRELESS
+          ./scripts/config --file out/.config -e CONFIG_WIRELESS_EXT
+          ./scripts/config --file out/.config -m CONFIG_CFG80211
+          ./scripts/config --file out/.config -m CONFIG_MAC80211
 
       - name: Compile the Full Kernel
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-
+          
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
-
+          
           yes "" | make $MAKE_ARGS olddefconfig
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
 
@@ -107,7 +106,7 @@ jobs:
           # Copy your custom adapter driver
           cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
           
-          # RESCUE THE WI-FI CORE FILES safely! (|| true ensures it won't crash the build)
+          # Bulletproof rescue command for the Wi-Fi Core files
           find ../kernel-source/out -type f -name "cfg80211.ko" -exec cp {} TP-Link-Driver/ \; || true
           find ../kernel-source/out -type f -name "mac80211.ko" -exec cp {} TP-Link-Driver/ \; || true
           
