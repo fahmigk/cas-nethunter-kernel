@@ -3,7 +3,6 @@ name: Build Mi10 Ultra NetHunter Release
 on:
   workflow_dispatch:
 
-# REQUIRED: This permission allows the bot to publish the Release to your repo
 permissions:
   contents: write
 
@@ -53,12 +52,12 @@ jobs:
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           
-          # Safely enforce Wi-Fi Core as Modules using the kernel's native tool
+          # FUSE the Wi-Fi Core directly into the kernel (-e) so it never unloads
           ./scripts/config --file out/.config -e CONFIG_MODULES
           ./scripts/config --file out/.config -e CONFIG_WIRELESS
           ./scripts/config --file out/.config -e CONFIG_WIRELESS_EXT
-          ./scripts/config --file out/.config -m CONFIG_CFG80211
-          ./scripts/config --file out/.config -m CONFIG_MAC80211
+          ./scripts/config --file out/.config -e CONFIG_CFG80211
+          ./scripts/config --file out/.config -e CONFIG_MAC80211
 
       - name: Compile the Full Kernel
         run: |
@@ -102,9 +101,6 @@ jobs:
           mkdir -p TP-Link-Driver
           cp ../rtl8188eus/8188eu.ko TP-Link-Driver/
           
-          find ../kernel-source/out -type f -name "cfg80211.ko" -exec cp {} TP-Link-Driver/ \; || true
-          find ../kernel-source/out -type f -name "mac80211.ko" -exec cp {} TP-Link-Driver/ \; || true
-          
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
 
       - name: Publish GitHub Release
@@ -116,7 +112,7 @@ jobs:
           name: "Mi 10 Ultra Custom NetHunter Kernel"
           body: |
             Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).
-            Includes patched Wi-Fi Core (`cfg80211.ko`) and external RTL8188EUS driver for Kali NetHunter.
+            Includes FUSED Wi-Fi Core (`cfg80211`) and external RTL8188EUS driver for Kali NetHunter.
             Build ID: ${{ github.run_id }}
           draft: false
           prerelease: false
