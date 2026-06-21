@@ -84,16 +84,13 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           
-          # FIX 1: Prevent "Exec format error" by forcing the module to use Proton Clang instead of standard GCC
-          sed -i 's/$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KSRC) M=$(PWD)/$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) CC=clang LLVM=1 LLVM_IAS=1 -C $(KSRC) M=$(PWD)/g' Makefile
-          
-          # Compile the module with the necessary Wi-Fi Core hooks
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+          # FIX: Forcefully pass CC=clang and LLVM=1 straight to the make command so it cannot fall back to GCC!
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 \
             KSRC=$(pwd)/../kernel-source/out \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
             modules
           
-          # FIX 2: Use LLVM-Strip to shrink the file size. Regular strip corrupts Clang files!
+          # Use LLVM-Strip to shrink the file size without corrupting it
           llvm-strip --strip-debug 8188eu.ko
 
       - name: Package Flasheable ZIP (AnyKernel3)
