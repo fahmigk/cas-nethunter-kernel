@@ -1,4 +1,4 @@
-name: Build Mi10Ultra (cas) NetHunter Kernel - AnyKernel3
+name: Build NetHunter Kernel (AnyKernel3)
 
 on:
   workflow_dispatch:
@@ -7,35 +7,40 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler kmod
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler
 
-      - name: Clone Kernel Source & AnyKernel3
+      - name: Clone Kernel Source
         run: |
           git clone --depth=1 https://github.com/AstideLabs/android_kernel_xiaomi_sm8250.git kernel
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
-          echo "Sources cloned successfully."
 
-      - name: Patch Kernel Source for Modern Compilers
+      - name: Clone AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+
+      - name: Patch Kernel Source
         run: |
           cd kernel
-          # Fix 1: Remove 'inline' from bpf_trace.c (varargs + inline = hard error on GCC11+/Clang14+)
-          if [ -f "kernel/trace/bpf_trace.c" ]; then
-            sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-            echo "Patched bpf_trace.c"
-          fi
-          
-          # Fix 2: Disable -Werror globally to bypass walt.h format mismatch warnings
-          sed -i 's/-Werror//g' Makefile
-          sed -i 's/-Werror//g' scripts/Makefile.build
-          echo "Disabled -Werror in Makefiles"
+          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c || true
+          sed -i 's/-Werror//g' Makefile || true
+          sed -i 's/-Werror//g' scripts/Makefile.build || true
 
-      - name: Configure Kernel (ReSukiSU + NetHunter WiFi + Android 16)
+      - name: Clone WiFi Drivers
+        run: |
+          cd kernel/drivers/net/wireless/
+          git clone --depth=1 https://github.com/aircrack-ng/rtl8188eus.git || true
+          git clone --depth=1 https://github.com/aircrack-ng/rtl8812au.git || true
+          echo 'obj-$(CONFIG_RTL8188EUS) += rtl8188eus/' >> Makefile || true
+          echo 'obj-$(CONFIG_RTL8812AU) += rtl8812au/' >> Makefile || true
+          echo 'source "drivers/net/wireless/rtl8188eus/Kconfig"' >> Kconfig || true
+          echo 'source "drivers/net/wireless/rtl8812au/Kconfig"' >> Kconfig || true
+
+      - name: Configure Kernel
         run: |
           cd kernel
           export ARCH=arm64
@@ -43,64 +48,22 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          
-          # Locate correct defconfig for cas
-          DEFCONFIG="cas_defconfig"
-          if [ -f "arch/arm64/configs/vendor/cas_defconfig" ]; then
-            DEFCONFIG="vendor/cas_defconfig"          elif [ -f "arch/arm64/configs/cas_defconfig" ]; then
-            DEFCONFIG="cas_defconfig"
-          else
-            DEFCONFIG="sm8250_defconfig"
-          fi
-          echo "Using defconfig: $DEFCONFIG"
-          
-          make O=out $DEFCONFIG
-          
-          # Force ReSukiSU / KernelSU support
+          make O=out cas_defconfig || true
+          make O=out vendor/cas_defconfig || true
+          make O=out sm8250_defconfig || true
           echo "CONFIG_KSU=y" >> out/.config
           echo "CONFIG_KPROBES=y" >> out/.config
-          echo "CONFIG_HAVE_KPROBES=y" >> out/.config
-          echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
-          echo "CONFIG_BPF=y" >> out/.config
-          echo "CONFIG_BPF_SYSCALL=y" >> out/.config
-          
-          # Enable comprehensive NetHunter WiFi drivers (built-in for Android 16 compatibility)
+          echo "CONFIG_RTL8188EUS=m" >> out/.config
+          echo "CONFIG_RTL8812AU=m" >> out/.config
+          echo "CONFIG_RTL88X2BU=m" >> out/.config
+          echo "CONFIG_MT76X2U=m" >> out/.config
+          echo "CONFIG_ATH9K_HTC=m" >> out/.config
           echo "CONFIG_CFG80211=y" >> out/.config
           echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
-          echo "CONFIG_WEXT_CORE=y" >> out/.config
-          echo "CONFIG_WEXT_PROC=y" >> out/.config
-          
-          # Realtek USB Adapters
-          echo "CONFIG_RTL8188EUS=y" >> out/.config
-          echo "CONFIG_RTL8188FU=y" >> out/.config
-          echo "CONFIG_RTL8192CU=y" >> out/.config
-          echo "CONFIG_RTL8192EU=y" >> out/.config
-          echo "CONFIG_RTL8723BU=y" >> out/.config
-          echo "CONFIG_RTL8812AU=y" >> out/.config
-          echo "CONFIG_RTL8821AU=y" >> out/.config
-          echo "CONFIG_RTL88X2BU=y" >> out/.config
-          
-          # MediaTek USB Adapters
-          echo "CONFIG_MT7601U=y" >> out/.config
-          echo "CONFIG_MT76X2U=y" >> out/.config
-          echo "CONFIG_MT7663U=y" >> out/.config
-          
-          # Atheros USB Adapters
-          echo "CONFIG_ATH9K_HTC=y" >> out/.config
-          
-          # Android 16 Compatibility Flags
-          echo "CONFIG_ANDROID=y" >> out/.config
-          echo "CONFIG_ANDROID_BINDER_IPC=y" >> out/.config
-          echo "CONFIG_ASHMEM=y" >> out/.config
-          echo "CONFIG_NAMESPACES=y" >> out/.config
-          echo "CONFIG_NET_NS=y" >> out/.config
-          
-          # Apply and clean config          make O=out olddefconfig
-          echo "=== Final Config Verification ==="
-          grep -E "CONFIG_KSU|CONFIG_RTL8812AU|CONFIG_MT7601U|CONFIG_ATH9K_HTC|CONFIG_CFG80211" out/.config || true
+          make O=out olddefconfig
 
-      - name: Build Kernel Image & DTBO
+      - name: Build Kernel
         run: |
           cd kernel
           export ARCH=arm64
@@ -108,36 +71,25 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          
-          # Build with flags to suppress harmless format/unused warnings
-          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format -Wno-unused-variable" Image.gz dtbo.img
-          
-          echo "Build finished successfully!"
+          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format" Image.gz modules
           ls -lh out/arch/arm64/boot/
 
-      - name: Package AnyKernel3 ZIP
+      - name: Package AnyKernel3
         run: |
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel/ || true
+          cp kernel/out/arch/arm64/boot/Image anykernel/ || true
+          mkdir -p anykernel/system/lib/modules
+          find kernel/out -name "*.ko" -exec cp {} anykernel/system/lib/modules/ \; || true
           cd anykernel
-          
-          # Configure AnyKernel3 for Mi 10 Ultra (cas)
           sed -i 's/device.name1=.*/device.name1=cas/' anykernel.sh
           sed -i 's/device.name2=.*/device.name2=mi10ultra/' anykernel.sh
           sed -i 's/do.devicecheck=0/do.devicecheck=1/' anykernel.sh
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/' anykernel.sh
           sed -i 's/is_slot_device=0/is_slot_device=auto/' anykernel.sh
-          
-          # Copy compiled kernel files
-          cp ../kernel/out/arch/arm64/boot/Image.gz .
-          cp ../kernel/out/arch/arm64/boot/dtbo.img .
-          
-          # Create flashable ZIP
-          zip -r9 ../NetHunter-Kernel-cas-AnyKernel3.zip . -x .git README.md .gitignore
-          echo "AnyKernel3 ZIP created successfully!"
-          ls -lh ../NetHunter-Kernel-cas-AnyKernel3.zip
+          zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
 
-      - name: Upload Flashable ZIP
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-Kernel-cas-AnyKernel3
-          path: NetHunter-Kernel-cas-AnyKernel3.zip
-          retention-days: 30
+          name: NetHunter-cas-AnyKernel3
+          path: NetHunter-cas-AnyKernel3.zip
