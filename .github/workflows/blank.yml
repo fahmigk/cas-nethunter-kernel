@@ -1,4 +1,4 @@
-name: Build Mi10Ultra NetHunter Kernel (Fixed)
+name: Build Mi10Ultra NetHunter Kernel (Clang + Patches)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Dependencies
@@ -19,18 +19,18 @@ jobs:
         run: |
           git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
 
-      - name: Patch Kernel Source (CRITICAL FIX)
+      - name: Patch Kernel Source (Fix Clang Errors)
         run: |
           cd kernel
           
-          # Fix 1: Remove 'inline' from bpf_trace.c to fix the hard compiler error
+          # Fix 1: Remove 'inline' from bpf_trace.c to fix varargs error
           echo "Patching bpf_trace.c..."
           sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
           
-          # Fix 2: Remove -Werror from Makefiles to allow walt.h warnings to pass
+          # Fix 2: Change -Werror to -Wno-error in all Makefiles
+          # This prevents walt.h format warnings from stopping the build
           echo "Disabling -Werror..."
-          sed -i 's/-Werror//g' Makefile
-          sed -i 's/-Werror//g' scripts/Makefile.build
+          find . -type f -name "Makefile*" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           
           echo "Patches applied successfully!"
 
@@ -38,7 +38,6 @@ jobs:
         run: |
           cd kernel
           export ARCH=arm64
-          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
@@ -58,7 +57,6 @@ jobs:
         run: |
           cd kernel
           export ARCH=arm64
-          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
