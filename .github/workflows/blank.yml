@@ -33,12 +33,12 @@ jobs:
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Configure and Patch Kernel
+            - name: Configure and Patch Kernel
         run: |
           cd kernel-source
           mkdir -p out
           
-          # Copy base configuration from your repository root
+          # Copy base configuration
           cp ../stock_config out/.config
           
           touch .scmversion
@@ -52,27 +52,51 @@ jobs:
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           
-          # FUSE the Wi-Fi Core directly into the kernel (-e) to prevent "Unknown Symbol"
+          # FUSE the Wi-Fi Core
           ./scripts/config --file out/.config -e CONFIG_MODULES
           ./scripts/config --file out/.config -e CONFIG_WIRELESS
           ./scripts/config --file out/.config -e CONFIG_WIRELESS_EXT
           ./scripts/config --file out/.config -e CONFIG_CFG80211
           ./scripts/config --file out/.config -e CONFIG_MAC80211
           
-          # Force Enable ReSukiSU Root, KPM, and non-GKI flags
-          ./scripts/config --file out/.config -e CONFIG_KSU
+          # 1. Force Enable Missing Core Dependencies for KernelSU
+          ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS
+          ./scripts/config --file out/.config -e CONFIG_DEBUG_FS
+          ./scripts/config --file out/.config -e CONFIG_SECURITY
+          
+          # 2. Force Enable ReSukiSU Root, KPM, and non-GKI flags
           ./scripts/config --file out/.config -e CONFIG_KPROBES
           ./scripts/config --file out/.config -e CONFIG_HAVE_KPROBES
           ./scripts/config --file out/.config -e CONFIG_KPROBE_EVENTS
           ./scripts/config --file out/.config -e CONFIG_KPM
           ./scripts/config --file out/.config -e CONFIG_KALLSYMS
           ./scripts/config --file out/.config -e CONFIG_KALLSYMS_ALL
+          ./scripts/config --file out/.config -e CONFIG_KSU
           
-          # Force Enable SUSFS Hiding
+          # 3. Force Enable SUSFS Hiding
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_PATH
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_MOUNT
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_KSTAT
+
+      - name: Compile the Full Kernel
+        run: |
+          cd kernel-source
+          export PATH="$(pwd)/../clang/bin:$PATH"
+          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          
+          # Added KSU=true and KSU_SUSFS=true to the MAKE_ARGS to guarantee module inclusion
+          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true"
+          
+          # Resolve configs
+          yes "" | make $MAKE_ARGS olddefconfig
+          
+          # Double check that CONFIG_KSU survived the clean process (for the logs)
+          grep "CONFIG_KSU" out/.config || echo "WARNING: KSU stripped from config!"
+          
+          # Build
+          make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
+
 
       - name: Compile the Full Kernel
         run: |
