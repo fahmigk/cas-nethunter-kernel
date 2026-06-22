@@ -83,17 +83,20 @@ jobs:
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
           
-          # KSU=true and KSU_SUSFS=true injected to guarantee root compiler triggers
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true"
+          # Full Professional LLVM Definition
+          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true"
           
           yes "" | make $MAKE_ARGS olddefconfig
           
-          # Log verify
+          # Verify KSU was retained
           grep "CONFIG_KSU" out/.config || echo "WARNING: KSU missing!"
           
+          # Build Kernel & Modules
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
+          
+          # Map native modules safely
+          make $MAKE_ARGS modules_install INSTALL_MOD_PATH=modules_install
 
       - name: Compile External NetHunter Driver (RTL8188EUS)
         run: |
@@ -104,11 +107,12 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 \
+          # Unified LLVM toolchain for external driver to prevent signature mismatch
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
             KSRC=$(pwd)/../kernel-source/out \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
             modules
-          llvm-strip --strip-debug 8188eu.ko
+          llvm-strip --strip-unneeded -g 8188eu.ko
 
       - name: Compile External NetHunter Driver (RTL8812AU)
         run: |
@@ -119,18 +123,19 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 \
+          # Unified LLVM toolchain for external driver
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
             KSRC=$(pwd)/../kernel-source/out \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
             modules
-          llvm-strip --strip-debug 88XXau.ko
+          llvm-strip --strip-unneeded -g 88XXau.ko
 
       - name: Package Universal AOSP Flasheable ZIP (AnyKernel3)
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
-          # Completely Overwrite anykernel.sh to fix the install abort error
+          # Write exact Mi 10 Ultra specific AnyKernel.sh
           cat << 'EOF' > anykernel.sh
           # AnyKernel3 Ramdisk Mod Script for Mi 10 Ultra
           properties() { '
@@ -143,11 +148,6 @@ jobs:
           device.name1=cas
           device.name2=
           device.name3=
-          device.name4=
-          device.name5=
-          supported.versions=
-          supported.patchlevels=
-          supported.vendorpatchlevels=
           '; }
           boot_attributes() {
           set_perm_recursive 0 0 755 644 $RAMDISK/*;
@@ -157,7 +157,9 @@ jobs:
           IS_SLOT_DEVICE=auto;
           RAMDISK_COMPRESSION=auto;
           PATCH_VBMETA_FLAG=auto;
+          
           . tools/ak3-core.sh;
+          
           dump_boot;
           write_boot;
           EOF
@@ -168,27 +170,24 @@ jobs:
           # Create universal vendor module directory
           mkdir -p modules/vendor/lib/modules/
           
-          # Copy internal AOSP hardware modules
-          find ../kernel-source/out/ -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
+          # Safely extract all natively compiled .ko modules without breaking paths
+          find ../kernel-source/out/modules_install/ -type f -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
-          # Copy external NetHunter Wi-Fi drivers
+          # Add external NetHunter Wi-Fi drivers
           cp ../rtl8188eus/8188eu.ko modules/vendor/lib/modules/
           cp ../rtl8812au/88XXau.ko modules/vendor/lib/modules/
           
-          # Strip debug info to keep ZIP size tiny
+          # Strip debug info uniformly
           export PATH="$(pwd)/../clang/bin:$PATH"
-          find modules/vendor/lib/modules/ -name "*.ko" -exec llvm-strip --strip-debug {} \;
+          find modules/vendor/lib/modules/ -name "*.ko" -exec llvm-strip --strip-unneeded -g {} \;
           
-          # Generate modules.load so Android auto-loads everything perfectly
+          # Create clean modules.load list dynamically for flawless AOSP auto-load
           cd modules/vendor/lib/modules/
           touch modules.dep modules.alias modules.softdep
-          > modules.load
-          for mod in *.ko; do
-            echo "$(basename "$mod" .ko)" >> modules.load
-          done
+          ls -1 *.ko | sed 's/\.ko$//' > modules.load
           cd ../../../../
           
-          zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip *
+          zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip * -x .git README.md *anykernel.zip
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -201,10 +200,10 @@ jobs:
             **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
             
             ### Release Highlights:
-            * **ReSukiSU Integrated:** Kernel-level root and SUSFS are completely hardcoded and strictly enforced.
-            * **Universal AOSP Compatibility:** A fully auto-generated `modules.load` file ensures that all native Qualcomm drivers (Audio, Camera, etc.) initialize cleanly across any custom ROM.
+            * **ReSukiSU Integrated:** Kernel-level root and SUSFS are hardcoded via Native LLVM toolchain passing.
+            * **Universal Native Modules:** Utilizes `modules_install` for native dependency mapping, resolving bootloops across custom ROMs.
             * **FUSED Wi-Fi Core (`cfg80211`):** Resolves all native driver linker conflicts permanently.
-            * **Plug & Play NetHunter Adapters:** Includes both **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`) configured to auto-load on boot for instant monitor mode.
+            * **Plug & Play NetHunter Adapters:** Includes both **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`), compiled safely with the identical LLVM toolchain.
           draft: false
           prerelease: false
           files: NetHunter-Kernel-Mi10Ultra.zip
