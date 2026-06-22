@@ -88,8 +88,6 @@ jobs:
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true"
           
           yes "" | make $MAKE_ARGS olddefconfig
-          
-          # Verify KSU was retained
           grep "CONFIG_KSU" out/.config || echo "WARNING: KSU missing!"
           
           # Build Kernel & Modules
@@ -107,12 +105,12 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           
-          # Unified LLVM toolchain for external driver to prevent signature mismatch
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
             KSRC=$(pwd)/../kernel-source/out \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
             modules
-          llvm-strip --strip-unneeded -g 8188eu.ko
+          # FIXED: Swapped back to --strip-debug
+          llvm-strip --strip-debug 8188eu.ko
 
       - name: Compile External NetHunter Driver (RTL8812AU)
         run: |
@@ -123,19 +121,18 @@ jobs:
           sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
           sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
           
-          # Unified LLVM toolchain for external driver
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
             KSRC=$(pwd)/../kernel-source/out \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
             modules
-          llvm-strip --strip-unneeded -g 88XXau.ko
+          # FIXED: Swapped back to --strip-debug
+          llvm-strip --strip-debug 88XXau.ko
 
       - name: Package Universal AOSP Flasheable ZIP (AnyKernel3)
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
-          # Write exact Mi 10 Ultra specific AnyKernel.sh
           cat << 'EOF' > anykernel.sh
           # AnyKernel3 Ramdisk Mod Script for Mi 10 Ultra
           properties() { '
@@ -164,24 +161,18 @@ jobs:
           write_boot;
           EOF
           
-          # Copy Kernel Image
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
-          
-          # Create universal vendor module directory
           mkdir -p modules/vendor/lib/modules/
           
-          # Safely extract all natively compiled .ko modules without breaking paths
           find ../kernel-source/out/modules_install/ -type f -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
-          # Add external NetHunter Wi-Fi drivers
           cp ../rtl8188eus/8188eu.ko modules/vendor/lib/modules/
           cp ../rtl8812au/88XXau.ko modules/vendor/lib/modules/
           
-          # Strip debug info uniformly
+          # FIXED: Swapped back to --strip-debug for AOSP native modules
           export PATH="$(pwd)/../clang/bin:$PATH"
-          find modules/vendor/lib/modules/ -name "*.ko" -exec llvm-strip --strip-unneeded -g {} \;
+          find modules/vendor/lib/modules/ -name "*.ko" -exec llvm-strip --strip-debug {} \;
           
-          # Create clean modules.load list dynamically for flawless AOSP auto-load
           cd modules/vendor/lib/modules/
           touch modules.dep modules.alias modules.softdep
           ls -1 *.ko | sed 's/\.ko$//' > modules.load
@@ -203,7 +194,7 @@ jobs:
             * **ReSukiSU Integrated:** Kernel-level root and SUSFS are hardcoded via Native LLVM toolchain passing.
             * **Universal Native Modules:** Utilizes `modules_install` for native dependency mapping, resolving bootloops across custom ROMs.
             * **FUSED Wi-Fi Core (`cfg80211`):** Resolves all native driver linker conflicts permanently.
-            * **Plug & Play NetHunter Adapters:** Includes both **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`), compiled safely with the identical LLVM toolchain.
+            * **Plug & Play NetHunter Adapters:** Includes both **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`).
           draft: false
           prerelease: false
           files: NetHunter-Kernel-Mi10Ultra.zip
