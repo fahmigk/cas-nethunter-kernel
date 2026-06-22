@@ -33,7 +33,7 @@ jobs:
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-            - name: Configure and Patch Kernel
+      - name: Configure and Patch Kernel
         run: |
           cd kernel-source
           mkdir -p out
@@ -59,12 +59,12 @@ jobs:
           ./scripts/config --file out/.config -e CONFIG_CFG80211
           ./scripts/config --file out/.config -e CONFIG_MAC80211
           
-          # 1. Force Enable Missing Core Dependencies for KernelSU
+          # Force Enable Core Dependencies for ReSukiSU
           ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS
           ./scripts/config --file out/.config -e CONFIG_DEBUG_FS
           ./scripts/config --file out/.config -e CONFIG_SECURITY
           
-          # 2. Force Enable ReSukiSU Root, KPM, and non-GKI flags
+          # Force Enable ReSukiSU Root Hooks & Non-GKI Flags
           ./scripts/config --file out/.config -e CONFIG_KPROBES
           ./scripts/config --file out/.config -e CONFIG_HAVE_KPROBES
           ./scripts/config --file out/.config -e CONFIG_KPROBE_EVENTS
@@ -73,7 +73,7 @@ jobs:
           ./scripts/config --file out/.config -e CONFIG_KALLSYMS_ALL
           ./scripts/config --file out/.config -e CONFIG_KSU
           
-          # 3. Force Enable SUSFS Hiding
+          # Force Enable SUSFS
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_PATH
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_MOUNT
@@ -85,28 +85,14 @@ jobs:
           export PATH="$(pwd)/../clang/bin:$PATH"
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
           
-          # Added KSU=true and KSU_SUSFS=true to the MAKE_ARGS to guarantee module inclusion
+          # KSU=true and KSU_SUSFS=true injected to guarantee root compiler triggers
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true"
           
-          # Resolve configs
           yes "" | make $MAKE_ARGS olddefconfig
           
-          # Double check that CONFIG_KSU survived the clean process (for the logs)
-          grep "CONFIG_KSU" out/.config || echo "WARNING: KSU stripped from config!"
+          # Log verify
+          grep "CONFIG_KSU" out/.config || echo "WARNING: KSU missing!"
           
-          # Build
-          make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
-
-
-      - name: Compile the Full Kernel
-        run: |
-          cd kernel-source
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-          
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 WERROR=0 KCFLAGS=-Wno-unknown-warning-option"
-          
-          yes "" | make $MAKE_ARGS olddefconfig
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
 
       - name: Compile External NetHunter Driver (RTL8188EUS)
@@ -144,11 +130,39 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
-          # Fix AnyKernel parameters for Xiaomi Mi 10 Ultra (A/B Partition)
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's|block=.*|block=/dev/block/by-name/boot;|g' anykernel.sh
-          sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=auto;/g' anykernel.sh
+          # Completely Overwrite anykernel.sh to fix the install abort error
+          cat << 'EOF' > anykernel.sh
+          # AnyKernel3 Ramdisk Mod Script for Mi 10 Ultra
+          properties() { '
+          kernel.string=Mi 10 Ultra NetHunter + ReSukiSU Kernel
+          do.devicecheck=0
+          do.modules=1
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=cas
+          device.name2=
+          device.name3=
+          device.name4=
+          device.name5=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          }
+          BLOCK=/dev/block/by-name/boot;
+          IS_SLOT_DEVICE=auto;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
           
+          # Copy Kernel Image
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           
           # Create universal vendor module directory
@@ -187,7 +201,7 @@ jobs:
             **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
             
             ### Release Highlights:
-            * **ReSukiSU Integrated:** Kernel-level root, KPM, and SUSFS are completely hardcoded. Your manager will instantly display "Working Built-in" post-flash.
+            * **ReSukiSU Integrated:** Kernel-level root and SUSFS are completely hardcoded and strictly enforced.
             * **Universal AOSP Compatibility:** A fully auto-generated `modules.load` file ensures that all native Qualcomm drivers (Audio, Camera, etc.) initialize cleanly across any custom ROM.
             * **FUSED Wi-Fi Core (`cfg80211`):** Resolves all native driver linker conflicts permanently.
             * **Plug & Play NetHunter Adapters:** Includes both **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`) configured to auto-load on boot for instant monitor mode.
