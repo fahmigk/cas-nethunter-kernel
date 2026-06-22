@@ -38,46 +38,21 @@ jobs:
           cd kernel-source
           mkdir -p out
           
-          # Copy base configuration
           cp ../stock_config out/.config
           
           touch .scmversion
           sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
           
-          # Fix Netprio Cgroup Bug
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
           sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
           
-          # Disable strict compiler Werrors
           find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           
-          # FUSE the Wi-Fi Core
-          ./scripts/config --file out/.config -e CONFIG_MODULES
-          ./scripts/config --file out/.config -e CONFIG_WIRELESS
-          ./scripts/config --file out/.config -e CONFIG_WIRELESS_EXT
-          ./scripts/config --file out/.config -e CONFIG_CFG80211
-          ./scripts/config --file out/.config -e CONFIG_MAC80211
-          
-          # Force Enable Core Dependencies for ReSukiSU
-          ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS
-          ./scripts/config --file out/.config -e CONFIG_DEBUG_FS
-          ./scripts/config --file out/.config -e CONFIG_SECURITY
-          
-          # Force Enable ReSukiSU Root Hooks & Non-GKI Flags
-          ./scripts/config --file out/.config -e CONFIG_KPROBES
-          ./scripts/config --file out/.config -e CONFIG_HAVE_KPROBES
-          ./scripts/config --file out/.config -e CONFIG_KPROBE_EVENTS
-          ./scripts/config --file out/.config -e CONFIG_KPM
-          ./scripts/config --file out/.config -e CONFIG_KALLSYMS
-          ./scripts/config --file out/.config -e CONFIG_KALLSYMS_ALL
-          ./scripts/config --file out/.config -e CONFIG_KSU
-          
-          # Force Enable SUSFS
-          ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS
-          ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_PATH
-          ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_MOUNT
-          ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_KSTAT
+          ./scripts/config --file out/.config -e CONFIG_MODULES -e CONFIG_WIRELESS -e CONFIG_WIRELESS_EXT -e CONFIG_CFG80211 -e CONFIG_MAC80211
+          ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS -e CONFIG_DEBUG_FS -e CONFIG_SECURITY
+          ./scripts/config --file out/.config -e CONFIG_KPROBES -e CONFIG_HAVE_KPROBES -e CONFIG_KPROBE_EVENTS -e CONFIG_KPM -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL -e CONFIG_KSU
+          ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_PATH -e CONFIG_KSU_SUSFS_SUS_MOUNT -e CONFIG_KSU_SUSFS_SUS_KSTAT
 
       - name: Compile the Full Kernel
         run: |
@@ -87,17 +62,14 @@ jobs:
           # Force the exact local version to match your running kernel
           export LOCALVERSION="-aptusitu-perf"
           
-          # Added LOCALVERSION to MAKE_ARGS so it is baked into every module's vermagic
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
           
           yes "" | make $MAKE_ARGS olddefconfig
           
-          # Build Kernel & Modules
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
           
-          # Bake the version string into modules_install
+          # Bake the version string into modules_install AND stop automated stripping
           make $MAKE_ARGS modules_install INSTALL_MOD_PATH=modules_install INSTALL_MOD_STRIP=0
-
 
       - name: Compile External NetHunter Driver (RTL8188EUS)
         run: |
@@ -112,8 +84,7 @@ jobs:
             KSRC=$(pwd)/../kernel-source/out \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
             modules
-          # FIXED: Swapped back to --strip-debug
-          llvm-strip --strip-debug 8188eu.ko
+          # STRIPPING REMOVED COMPLETELY TO PROTECT THE FILE
 
       - name: Compile External NetHunter Driver (RTL8812AU)
         run: |
@@ -128,8 +99,7 @@ jobs:
             KSRC=$(pwd)/../kernel-source/out \
             USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
             modules
-          # FIXED: Swapped back to --strip-debug
-          llvm-strip --strip-debug 88XXau.ko
+          # STRIPPING REMOVED COMPLETELY TO PROTECT THE FILE
 
       - name: Package Universal AOSP Flasheable ZIP (AnyKernel3)
         run: |
@@ -137,7 +107,6 @@ jobs:
           cd AnyKernel3
           
           cat << 'EOF' > anykernel.sh
-          # AnyKernel3 Ramdisk Mod Script for Mi 10 Ultra
           properties() { '
           kernel.string=Mi 10 Ultra NetHunter + ReSukiSU Kernel
           do.devicecheck=0
@@ -172,9 +141,7 @@ jobs:
           cp ../rtl8188eus/8188eu.ko modules/vendor/lib/modules/
           cp ../rtl8812au/88XXau.ko modules/vendor/lib/modules/
           
-          # FIXED: Swapped back to --strip-debug for AOSP native modules
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          find modules/vendor/lib/modules/ -name "*.ko" -exec llvm-strip --strip-debug {} \;
+          # STRIPPING REMOVED COMPLETELY FROM AOSP NATIVE MODULES
           
           cd modules/vendor/lib/modules/
           touch modules.dep modules.alias modules.softdep
@@ -194,8 +161,8 @@ jobs:
             **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
             
             ### Release Highlights:
-            * **ReSukiSU Integrated:** Kernel-level root and SUSFS are hardcoded via Native LLVM toolchain passing.
-            * **Universal Native Modules:** Utilizes `modules_install` for native dependency mapping, resolving bootloops across custom ROMs.
+            * **Vermagic Mismatch Fixed:** Forced `LOCALVERSION="-aptusitu-perf"` to ensure modules perfectly match the active kernel signature, resolving "Exec format error".
+            * **Unstripped Pure Modules:** Removed all `llvm-strip` commands to prevent ELF header corruption on Linux 4.19.
             * **FUSED Wi-Fi Core (`cfg80211`):** Resolves all native driver linker conflicts permanently.
             * **Plug & Play NetHunter Adapters:** Includes both **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`).
           draft: false
