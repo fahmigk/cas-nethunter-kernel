@@ -1,4 +1,4 @@
-name: Build Mi10Ultra NetHunter Kernel (A-Only)
+name: Build Mi10Ultra NetHunter Kernel (Fixed)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Install Dependencies
@@ -19,19 +19,20 @@ jobs:
         run: |
           git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
 
-      - name: Apply Critical Patches
+      - name: Patch Kernel Source (CRITICAL FIX)
         run: |
           cd kernel
           
-          # Fix 1: Bulletproof patch for bpf_trace.c inline error
-          # Finds the line with bpf_do_trace_printk and removes the word 'inline'
-          sed -i '/bpf_do_trace_printk/s/inline//g' kernel/trace/bpf_trace.c
-          echo "Patched bpf_trace.c"
+          # Fix 1: Remove 'inline' from bpf_trace.c to fix the hard compiler error
+          echo "Patching bpf_trace.c..."
+          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
           
-          # Fix 2: Completely disable -Werror in all Makefiles to prevent walt.h warnings from crashing the build
-          find . -type f -name "Makefile*" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          find . -type f -name "*.mk" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          echo "Disabled -Werror globally"
+          # Fix 2: Remove -Werror from Makefiles to allow walt.h warnings to pass
+          echo "Disabling -Werror..."
+          sed -i 's/-Werror//g' Makefile
+          sed -i 's/-Werror//g' scripts/Makefile.build
+          
+          echo "Patches applied successfully!"
 
       - name: Configure Kernel
         run: |
@@ -44,10 +45,7 @@ jobs:
           
           make O=out cas_defconfig
           
-          # Enable ReSukiSU / KernelSU
-          echo "CONFIG_KSU=y" >> out/.config
-          echo "CONFIG_KPROBES=y" >> out/.config
-                    # Enable NetHunter WiFi Drivers
+          # Enable NetHunter / WiFi Drivers
           echo "CONFIG_RTL8188EUS=m" >> out/.config
           echo "CONFIG_RTL8812AU=m" >> out/.config
           echo "CONFIG_CFG80211=y" >> out/.config
@@ -65,39 +63,14 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           
-          # Build with KCFLAGS to suppress any remaining warning errors
-          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format" Image.gz modules
+          # Build Image.gz
+          make -j$(nproc) O=out Image.gz
           
-          echo "Build finished successfully!"
+          echo "Build finished!"
           ls -lh out/arch/arm64/boot/
 
-      - name: Clone AnyKernel3
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
-
-      - name: Configure AnyKernel3 for A-Only Boot
-        run: |
-          cd anykernel
-          
-          # Set to A-Only (No slots)
-          sed -i 's/IS_SLOT_DEVICE=auto/IS_SLOT_DEVICE=0/g' anykernel.sh
-          sed -i 's/block=auto/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          
-          echo "Configured for A-only boot partition"
-
-      - name: Package AnyKernel3 Zip
-        run: |
-          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
-          
-          mkdir -p anykernel/system/lib/modules/
-          find kernel/out -name "*.ko" -exec cp {} anykernel/system/lib/modules/ \;
-          
-          cd anykernel
-          zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
-
-      - name: Upload Artifact        
-      uses: actions/upload-artifact@v4
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-cas-AnyKernel3
-          path: NetHunter-cas-AnyKernel3.zip
+          name: Mi10Ultra-Kernel-Image
+          path: kernel/out/arch/arm64/boot/Image.gz
