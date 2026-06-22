@@ -79,22 +79,25 @@ jobs:
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_MOUNT
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_KSTAT
 
-      - name: Compile the Full Kernel
+            - name: Compile the Full Kernel
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
           
-          # Full Professional LLVM Definition
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true"
+          # Force the exact local version to match your running kernel
+          export LOCALVERSION="-aptusitu-perf"
+          
+          # Added LOCALVERSION to MAKE_ARGS so it is baked into every module's vermagic
+          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
           
           yes "" | make $MAKE_ARGS olddefconfig
-          grep "CONFIG_KSU" out/.config || echo "WARNING: KSU missing!"
           
           # Build Kernel & Modules
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
           
-          # Map native modules safely
-          make $MAKE_ARGS modules_install INSTALL_MOD_PATH=modules_install
+          # Bake the version string into modules_install
+          make $MAKE_ARGS modules_install INSTALL_MOD_PATH=modules_install INSTALL_MOD_STRIP=0
+
 
       - name: Compile External NetHunter Driver (RTL8188EUS)
         run: |
