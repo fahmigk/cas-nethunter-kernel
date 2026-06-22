@@ -1,4 +1,4 @@
-name: Build Mi10Ultra NetHunter Kernel (AnyKernel3)
+name: Build Mi10Ultra Kernel (AnyKernel3)
 
 on:
   workflow_dispatch:
@@ -15,78 +15,68 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu clang lld device-tree-compiler
 
-      - name: Clone Kernel Source & AnyKernel3
+      - name: Clone Kernel Source
         run: |
-          git clone --depth=1 https://github.com/AstideLabs/android_kernel_xiaomi_sm8250.git kernel
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
+          git clone -b android16-aptusitu https://github.com/ApartTUSITU/kernel_xiaomi_sm8250_mod.git kernel
 
       - name: Patch Kernel Source
         run: |
           cd kernel
-          # Fix the Clang inline varargs hard error safely
+          # Fix 1: bpf_trace.c inline varargs error
           sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-          echo "Patched bpf_trace.c successfully"
+          
+          # Fix 2: Disable -Werror in Makefiles to prevent build failure on warnings
+          sed -i 's/-Werror//g' Makefile
+          sed -i 's/-Werror//g' scripts/Makefile.build
+          
+          # Fix 3: Fix walt.h format string mismatches
+          sed -i 's/#define SCHED_PRINT(arg)        printk_deferred("%s=%llu", #arg, arg)/#define SCHED_PRINT(arg)        printk_deferred("%s=%lu", #arg, (unsigned long)arg)/g' kernel/sched/walt.h
+          sed -i '453s/%lu/%llu/' kernel/sched/walt.h
 
       - name: Configure Kernel
         run: |
           cd kernel
           export ARCH=arm64
-          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          
           make O=out cas_defconfig
           
-          # Enable ReSukisu / KernelSU
+          # Enable necessary configs
           echo "CONFIG_KSU=y" >> out/.config
-          echo "CONFIG_KPROBES=y" >> out/.config
-          
-          # Enable NetHunter WiFi Drivers
           echo "CONFIG_RTL8188EUS=m" >> out/.config
           echo "CONFIG_RTL8812AU=m" >> out/.config
-          echo "CONFIG_RTL88X2BU=m" >> out/.config
-          echo "CONFIG_MT76X2U=m" >> out/.config
-          echo "CONFIG_ATH9K_HTC=m" >> out/.config
           echo "CONFIG_CFG80211=y" >> out/.config
           echo "CONFIG_MAC80211=y" >> out/.config
-          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
-          
           make O=out olddefconfig
 
-      - name: Build Kernel & Modules
+      - name: Build Kernel
         run: |
           cd kernel
           export ARCH=arm64
-          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          
-          # Build with Clang. KCFLAGS safely tells Clang to ignore format warnings and not treat warnings as errors.
-          make -j$(nproc) O=out KCFLAGS="-Wno-error -Wno-format" Image.gz modules
-          
-          echo "Build finished successfully!"
-          ls -lh out/arch/arm64/boot/
+          make -j$(nproc) O=out Image.gz modules
 
-      - name: Setup AnyKernel3
+      - name: Clone AnyKernel3
         run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git anykernel
+
+      - name: Package AnyKernel3
+        run: |
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+          mkdir -p anykernel/modules
+          find kernel/out -name "*.ko" -exec cp {} anykernel/modules/ \;
+          
           cd anykernel
+          # Configure for Mi 10 Ultra
           sed -i 's/do.devicecheck=0/do.devicecheck=1/g' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=cas/g' anykernel.sh
           sed -i 's/device.name2=.*/device.name2=mi10ultra/g' anykernel.sh
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=0/is_slot_device=auto/g' anykernel.sh
-          rm -rf .git
-
-      - name: Package AnyKernel3 Zip
-        run: |
-          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
           
-          mkdir -p anykernel/system/lib/modules/
-          find kernel/out -name "*.ko" -exec cp {} anykernel/system/lib/modules/ \;
-          
-          cd anykernel
           zip -r9 ../NetHunter-cas-AnyKernel3.zip .
 
       - name: Upload Artifact
