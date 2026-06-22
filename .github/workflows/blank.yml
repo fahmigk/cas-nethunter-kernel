@@ -96,7 +96,8 @@ jobs:
           cd anykernel
           zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
 
-      - name: Upload Artifact        uses: actions/upload-artifact@v4
+      - name: Upload Artifact        
+      uses: actions/upload-artifact@v4
         with:
           name: NetHunter-cas-AnyKernel3
           path: NetHunter-cas-AnyKernel3.zip
