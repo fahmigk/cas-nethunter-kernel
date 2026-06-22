@@ -79,8 +79,8 @@ jobs:
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_MOUNT
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS_SUS_KSTAT
 
-       - name: Compile the Full Kernel
-         run: |
+      - name: Compile the Full Kernel
+        run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
           
