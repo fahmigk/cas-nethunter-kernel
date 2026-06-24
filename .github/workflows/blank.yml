@@ -33,7 +33,7 @@ jobs:
         run: |
           git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
 
-      - name: Configure and Embed Firmware
+      - name: Configure and Patch Kernel
         run: |
           cd kernel-source
           mkdir -p out
@@ -54,16 +54,19 @@ jobs:
           ./scripts/config --file out/.config -e CONFIG_KPROBES -e CONFIG_HAVE_KPROBES -e CONFIG_KPROBE_EVENTS -e CONFIG_KPM -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL -e CONFIG_KSU
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_PATH -e CONFIG_KSU_SUSFS_SUS_MOUNT -e CONFIG_KSU_SUSFS_SUS_KSTAT
 
-          # --- MEMORY BAKE FIRMWARE FIX ---
-          # Download the required RTL8188EUS firmware
-          mkdir -p firmware/rtlwifi
-          curl -sL https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/rtlwifi/rtl8188eufw.bin -o firmware/rtlwifi/rtl8188eufw.bin
+      - name: Inject Drivers Natively Into Kernel Tree
+        run: |
+          cd kernel-source
           
-          # Force the kernel to embed the firmware binary directly into the vmlinux image
-          ./scripts/config --file out/.config --set-str CONFIG_EXTRA_FIRMWARE "rtlwifi/rtl8188eufw.bin"
-          ./scripts/config --file out/.config --set-str CONFIG_EXTRA_FIRMWARE_DIR "firmware"
+          # Clone NetHunter drivers straight into the native Realtek tree
+          git clone --depth=1 -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git drivers/net/wireless/realtek/rtl8188eus
+          git clone --depth=1 -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au.git drivers/net/wireless/realtek/rtl8812au
+          
+          # Register them cleanly as native in-tree modules
+          echo "obj-m += rtl8188eus/" >> drivers/net/wireless/realtek/Makefile
+          echo "obj-m += rtl8812au/" >> drivers/net/wireless/realtek/Makefile
 
-      - name: Compile the Full Kernel
+      - name: Compile the Full Kernel & Drivers
         run: |
           cd kernel-source
           export PATH="$(pwd)/../clang/bin:$PATH"
@@ -72,36 +75,12 @@ jobs:
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
           
           yes "" | make $MAKE_ARGS olddefconfig
+          
+          # This compiles the kernel image and all native/in-tree modules simultaneously
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
+          
+          # Installs everything into a temporary path without stripping debugging headers
           make $MAKE_ARGS modules_install INSTALL_MOD_PATH=modules_install INSTALL_MOD_STRIP=0
-
-      - name: Compile External NetHunter Driver (RTL8188EUS)
-        run: |
-          git clone -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git rtl8188eus
-          cd rtl8188eus
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KSRC=$(pwd)/../kernel-source/out \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
-            modules
-
-      - name: Compile External NetHunter Driver (RTL8812AU)
-        run: |
-          git clone -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au.git rtl8812au
-          cd rtl8812au
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          
-          sed -i 's/CONFIG_PLATFORM_I386_PC = y/CONFIG_PLATFORM_I386_PC = n/g' Makefile
-          sed -i 's/CONFIG_PLATFORM_ARM_AARCH64 = n/CONFIG_PLATFORM_ARM_AARCH64 = y/g' Makefile
-          
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KSRC=$(pwd)/../kernel-source/out \
-            USER_EXTRA_CFLAGS="-DCONFIG_LITTLE_ENDIAN -DCONFIG_IOCTL_CFG80211=1 -Wno-error -Wno-undef" \
-            modules
 
       - name: Package Universal AOSP Flasheable ZIP (AnyKernel3)
         run: |
@@ -136,14 +115,12 @@ jobs:
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           mkdir -p modules/vendor/lib/modules/
           
-          find ../kernel-source/out/modules_install/ -type f -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \; || true
-          
-          cp ../rtl8188eus/8188eu.ko modules/vendor/lib/modules/
-          cp ../rtl8812au/88XXau.ko modules/vendor/lib/modules/
+          # Automatically gathers all perfectly compiled modules from the build
+          find ../kernel-source/out/modules_install/ -type f -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
           cd modules/vendor/lib/modules/
           touch modules.dep modules.alias modules.softdep
-          ls -1 *.ko | sed 's/\.ko$//' > modules.load || true
+          ls -1 *.ko | sed 's/\.ko$//' > modules.load
           cd ../../../../
           
           zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip * -x .git README.md *anykernel.zip
@@ -156,12 +133,12 @@ jobs:
           tag_name: "Mi10Ultra-NetHunter-${{ github.run_id }}"
           name: "Mi 10 Ultra Universal NetHunter + ReSukiSU Kernel"
           body: |
-            **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
+            **Automated Clean AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
             
             ### Release Highlights:
-            * **Embedded Firmware Payload:** Bypasses Android's read-only `/vendor` and strict SELinux rules by hardcoding `rtl8188eufw.bin` directly into the kernel's RAM via `CONFIG_EXTRA_FIRMWARE`.
-            * **Linker Collision Avoided:** External modules safely separated from native kernel space to prevent duplicate symbols.
-            * **Vermagic Synchronized:** Forced `LOCALVERSION="-aptusitu-perf"`.
+            * **Clean Native In-Tree Compilation:** NetHunter drivers built right alongside core modules to ensure perfect 100% Vermagic synchronization (`4.19.325-aptusitu-perf`).
+            * **Zero Symbol Collision:** Built seamlessly as native kernel modules to eliminate linker namespace overlaps.
+            * **Pre-bundled Drivers:** Includes healthy, unstripped structural versions of **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`).
           draft: false
           prerelease: false
           files: NetHunter-Kernel-Mi10Ultra.zip
