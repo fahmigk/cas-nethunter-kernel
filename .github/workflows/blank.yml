@@ -29,9 +29,13 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-      - name: Clone the Kernel Source
+      - name: Clone Kernel Source (Deep Submodule Fix)
         run: |
-          git clone --depth=1 --recurse-submodules -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+          # Removed --depth=1 to ensure complete history mapping for submodules
+          git clone -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
+          cd kernel-source
+          # Force explicit structural check and pull of all embedded root engine files
+          git submodule update --init --recursive
 
       - name: Configure and Patch Kernel
         run: |
@@ -51,18 +55,16 @@ jobs:
           
           ./scripts/config --file out/.config -e CONFIG_MODULES -e CONFIG_WIRELESS -e CONFIG_WIRELESS_EXT -e CONFIG_CFG80211 -e CONFIG_MAC80211
           ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS -e CONFIG_DEBUG_FS -e CONFIG_SECURITY
-          ./scripts/config --file out/.config -e CONFIG_KPROBES -e CONFIG_HAVE_KPROBES -e CONFIG_KPROBE_EVENTS -e CONFIG_KPM -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL -e CONFIG_KSU
+          
+          # Force enable both standard KernelSU and customized SukiSU namespace options
+          ./scripts/config --file out/.config -e CONFIG_KPROBES -e CONFIG_HAVE_KPROBES -e CONFIG_KPROBE_EVENTS -e CONFIG_KPM -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL -e CONFIG_KSU -e CONFIG_SUKISU
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_PATH -e CONFIG_KSU_SUSFS_SUS_MOUNT -e CONFIG_KSU_SUSFS_SUS_KSTAT
 
-      - name: Inject Drivers Natively Into Kernel Tree
+      - name: Inject NetHunter Drivers Natively Into Kernel Tree
         run: |
           cd kernel-source
-          
-          # Clone NetHunter drivers straight into the native Realtek tree
           git clone --depth=1 -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git drivers/net/wireless/realtek/rtl8188eus
           git clone --depth=1 -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au.git drivers/net/wireless/realtek/rtl8812au
-          
-          # Register them cleanly as native in-tree modules
           echo "obj-m += rtl8188eus/" >> drivers/net/wireless/realtek/Makefile
           echo "obj-m += rtl8812au/" >> drivers/net/wireless/realtek/Makefile
 
@@ -72,14 +74,10 @@ jobs:
           export PATH="$(pwd)/../clang/bin:$PATH"
           export LOCALVERSION="-aptusitu-perf"
           
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
+          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objcopy STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUKISU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
           
           yes "" | make $MAKE_ARGS olddefconfig
-          
-          # This compiles the kernel image and all native/in-tree modules simultaneously
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
-          
-          # Installs everything into a temporary path without stripping debugging headers
           make $MAKE_ARGS modules_install INSTALL_MOD_PATH=modules_install INSTALL_MOD_STRIP=0
 
       - name: Package Universal AOSP Flasheable ZIP (AnyKernel3)
@@ -107,7 +105,6 @@ jobs:
           PATCH_VBMETA_FLAG=auto;
           
           . tools/ak3-core.sh;
-          
           dump_boot;
           write_boot;
           EOF
@@ -115,7 +112,6 @@ jobs:
           cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
           mkdir -p modules/vendor/lib/modules/
           
-          # Automatically gathers all perfectly compiled modules from the build
           find ../kernel-source/out/modules_install/ -type f -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
           cd modules/vendor/lib/modules/
@@ -133,12 +129,11 @@ jobs:
           tag_name: "Mi10Ultra-NetHunter-${{ github.run_id }}"
           name: "Mi 10 Ultra Universal NetHunter + ReSukiSU Kernel"
           body: |
-            **Automated Clean AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
+            **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
             
             ### Release Highlights:
-            * **Clean Native In-Tree Compilation:** NetHunter drivers built right alongside core modules to ensure perfect 100% Vermagic synchronization (`4.19.325-aptusitu-perf`).
-            * **Zero Symbol Collision:** Built seamlessly as native kernel modules to eliminate linker namespace overlaps.
-            * **Pre-bundled Drivers:** Includes healthy, unstripped structural versions of **RTL8188EUS** (`8188eu.ko`) and **RTL8812AU** (`88XXau.ko`).
+            * **Deep Submodule Fix Applied:** Fully initialized driver submodules to guarantee the inclusion of root files.
+            * **Clean Native In-Tree Compilation:** Fully synchronizes your NetHunter module drivers (`rtl8188eus` and `rtl8812au`).
           draft: false
           prerelease: false
           files: NetHunter-Kernel-Mi10Ultra.zip
