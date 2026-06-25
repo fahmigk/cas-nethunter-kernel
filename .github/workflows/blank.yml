@@ -55,8 +55,18 @@ jobs:
           ./scripts/config --file out/.config -e CONFIG_MODULES -e CONFIG_WIRELESS -e CONFIG_WIRELESS_EXT -e CONFIG_CFG80211 -e CONFIG_MAC80211
           ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS -e CONFIG_DEBUG_FS -e CONFIG_SECURITY
           
-          ./scripts/config --file out/.config -e CONFIG_KPROBES -e CONFIG_HAVE_KPROBES -e CONFIG_KPROBE_EVENTS -e CONFIG_KPM -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL -e CONFIG_KSU -e CONFIG_SUKISU
-          ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_PATH -e CONFIG_KSU_SUSFS_SUS_MOUNT -e CONFIG_KSU_SUSFS_SUS_KSTAT
+          # Force hardcoding configuration lines directly to avoid defconfig stripping
+          echo "CONFIG_KPROBES=y" >> out/.config
+          echo "CONFIG_HAVE_KPROBES=y" >> out/.config
+          echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
+          echo "CONFIG_KALLSYMS=y" >> out/.config
+          echo "CONFIG_KALLSYMS_ALL=y" >> out/.config
+          echo "CONFIG_KSU=y" >> out/.config
+          echo "CONFIG_SUKISU=y" >> out/.config
+          echo "CONFIG_KSU_SUSFS=y" >> out/.config
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> out/.config
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> out/.config
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> out/.config
 
       - name: Inject NetHunter Drivers Natively Into Kernel Tree
         run: |
@@ -72,7 +82,6 @@ jobs:
           export PATH="$(pwd)/../clang/bin:$PATH"
           export LOCALVERSION="-aptusitu-perf"
           
-          # FIXED: Cleaned up command variables to let vDSO builds fallback cleanly to GNU binutils
           MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUKISU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
           
           yes "" | make $MAKE_ARGS olddefconfig
@@ -131,9 +140,9 @@ jobs:
             **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
             
             ### Release Highlights:
-            * **vDSO Compilation Fixed:** Removed constrained LLVM objcopy arguments to enable stable cross-binutils packaging execution.
-            * **Deep Submodule Fix Active:** SukiSU native initialization completely pulled down.
-            * **In-Tree Driver Modules Mapping:** Corrected compilation tracking for underlying RTL adapters.
+            * **vDSO & GNU Utilities Patch Integrated**
+            * **Deep Synchronization Framework Submodules Forced**
+            * **Hardcoded Root Definitions (Fixes SECCOMP App Execution Error)**
           draft: false
           prerelease: false
           files: NetHunter-Kernel-Mi10Ultra.zip
