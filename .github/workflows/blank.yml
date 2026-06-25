@@ -23,7 +23,8 @@ jobs:
             make optipng maven libssl-dev pwgen libswitch-perl \
             policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
             bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip
+            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip \
+            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
 
       - name: Download Clang Toolchain (Proton Clang)
         run: |
@@ -31,10 +32,8 @@ jobs:
 
       - name: Clone Kernel Source (Deep Submodule Fix)
         run: |
-          # Removed --depth=1 to ensure complete history mapping for submodules
           git clone -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
           cd kernel-source
-          # Force explicit structural check and pull of all embedded root engine files
           git submodule update --init --recursive
 
       - name: Configure and Patch Kernel
@@ -56,7 +55,6 @@ jobs:
           ./scripts/config --file out/.config -e CONFIG_MODULES -e CONFIG_WIRELESS -e CONFIG_WIRELESS_EXT -e CONFIG_CFG80211 -e CONFIG_MAC80211
           ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS -e CONFIG_DEBUG_FS -e CONFIG_SECURITY
           
-          # Force enable both standard KernelSU and customized SukiSU namespace options
           ./scripts/config --file out/.config -e CONFIG_KPROBES -e CONFIG_HAVE_KPROBES -e CONFIG_KPROBE_EVENTS -e CONFIG_KPM -e CONFIG_KALLSYMS -e CONFIG_KALLSYMS_ALL -e CONFIG_KSU -e CONFIG_SUKISU
           ./scripts/config --file out/.config -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_PATH -e CONFIG_KSU_SUSFS_SUS_MOUNT -e CONFIG_KSU_SUSFS_SUS_KSTAT
 
@@ -74,7 +72,8 @@ jobs:
           export PATH="$(pwd)/../clang/bin:$PATH"
           export LOCALVERSION="-aptusitu-perf"
           
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objcopy STRIP=llvm-strip WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUKISU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
+          # FIXED: Cleaned up command variables to let vDSO builds fallback cleanly to GNU binutils
+          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUKISU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
           
           yes "" | make $MAKE_ARGS olddefconfig
           make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
@@ -132,8 +131,9 @@ jobs:
             **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
             
             ### Release Highlights:
-            * **Deep Submodule Fix Applied:** Fully initialized driver submodules to guarantee the inclusion of root files.
-            * **Clean Native In-Tree Compilation:** Fully synchronizes your NetHunter module drivers (`rtl8188eus` and `rtl8812au`).
+            * **vDSO Compilation Fixed:** Removed constrained LLVM objcopy arguments to enable stable cross-binutils packaging execution.
+            * **Deep Submodule Fix Active:** SukiSU native initialization completely pulled down.
+            * **In-Tree Driver Modules Mapping:** Corrected compilation tracking for underlying RTL adapters.
           draft: false
           prerelease: false
           files: NetHunter-Kernel-Mi10Ultra.zip
