@@ -19,15 +19,19 @@ jobs:
         run: |
           git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
 
-      - name: Pull and Link KernelSU Source
+      - name: Pull and Placement Fix for KernelSU-Next
         run: |
           cd kernel
-          # Ensure any existing empty folder or broken symlink is removed
+          # Ensure any existing folder is removed cleanly
           rm -rf drivers/kernelsu
           
-          # Force clone KernelSU-Next directly into the exact path expected by drivers/Kconfig
-          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next drivers/kernelsu
-          echo "KernelSU source successfully placed in drivers/kernelsu"
+          # Clone into a temp folder first
+          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
+          
+          # Copy the internal kernel directory contents directly to drivers/kernelsu
+          # This satisfies the exact path expected by drivers/Kconfig
+          cp -r /tmp/ksu/kernel drivers/kernelsu
+          echo "KernelSU source properly placed in drivers/kernelsu"
 
       - name: Patch Kernel Source (Fix GCC Hard Errors)
         run: |
