@@ -29,22 +29,17 @@ jobs:
           sudo apt install -y bc bison flex device-tree-compiler git make python3 kmod cpio rsync zip
           sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
-      - name: Download Clang 21 using sparse Git checkout
+      - name: Install Clang 21 and LLD 21 from official LLVM repository
         run: |
-          git clone --depth 1 --filter=blob:none --single-branch --branch main \
-            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-toolchain
-          cd clang-toolchain
-          # Sparse checkout: fetch the clang-r* folder (any version)
-          git sparse-checkout set clang-r*
-          git checkout
-          # Find the directory containing ld.lld
-          CLANG_BIN=$(find . -path "*/bin/ld.lld" -exec dirname {} \; | head -1)
-          if [ -z "$CLANG_BIN" ]; then
-            echo "ERROR: ld.lld not found in clang-toolchain"
-            exit 1
-          fi
-          echo "$PWD/$CLANG_BIN" >> $GITHUB_PATH
-          cd ..
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository -y "deb https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main"
+          sudo apt update
+          sudo apt install -y clang-21 lld-21
+          # Set environment for the rest of the job
+          echo "CC=clang-21" >> $GITHUB_ENV
+          echo "LD=ld.lld-21" >> $GITHUB_ENV
+          echo "LLVM=1" >> $GITHUB_ENV
+          echo "/usr/lib/llvm-21/bin" >> $GITHUB_PATH
 
       - name: Clone the actual kernel source
         run: |
@@ -93,16 +88,10 @@ jobs:
           cd kernel_source
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang-21
+          export LD=ld.lld-21
           export LLVM=1
-          # Get the absolute path to ld.lld from the clang-toolchain directory
-          LD_PATH=$(find ../clang-toolchain -name ld.lld -type f | head -1)
-          if [ -z "$LD_PATH" ]; then
-            echo "ERROR: ld.lld not found!"
-            exit 1
-          fi
-          export LD=$LD_PATH
-          # Also add the directory to PATH for good measure
-          export PATH=$(dirname $LD_PATH):$PATH
+          # The PATH already includes /usr/lib/llvm-21/bin
 
           make Image dtbo.img dtb modules -j$(nproc) || \
           make dtbo.img dtb modules -j$(nproc) || \
