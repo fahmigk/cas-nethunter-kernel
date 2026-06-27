@@ -43,12 +43,12 @@ jobs:
         run: |
           git clone ${{ env.KERNEL_SOURCE_URL }} --depth 1 --branch ${{ env.KERNEL_BRANCH }} kernel_source
 
-      - name: Configure kernel for monitor mode and disable KernelSU
+      - name: Configure kernel for monitor mode
         run: |
           cp stock_config.txt kernel_source/.config
           cd kernel_source
 
-          # Enable monitor mode and WiFi drivers
+          # Enable WiFi and monitor mode features
           sed -i 's/^# CONFIG_CFG80211 is not set/CONFIG_CFG80211=y/' .config
           sed -i 's/^CONFIG_CFG80211=m/CONFIG_CFG80211=y/' .config
           sed -i 's/^# CONFIG_MAC80211 is not set/CONFIG_MAC80211=y/' .config
@@ -67,11 +67,14 @@ jobs:
           sed -i 's/^# CONFIG_MT7610U is not set/CONFIG_MT7610U=y/' .config
           sed -i 's/^# CONFIG_MT7612U is not set/CONFIG_MT7612U=y/' .config
 
-          # Disable KernelSU to avoid missing Kconfig
+          # Disable KernelSU to avoid missing Kconfig errors
           sed -i 's/^CONFIG_KSU=y/CONFIG_KSU=n/' .config
           sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=n/' .config
           sed -i '/^CONFIG_KSU_/d' .config
           echo '# CONFIG_KSU is not set' >> .config
+
+          # 🛑 THE CRITICAL FIX: Comment out the missing KernelSU Kconfig source line
+          sed -i 's|source "drivers/kernelsu/Kconfig"|# source "drivers/kernelsu/Kconfig"|' drivers/Kconfig
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
