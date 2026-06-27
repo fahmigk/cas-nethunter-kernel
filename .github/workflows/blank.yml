@@ -76,17 +76,24 @@ jobs:
           sed -i 's|source "drivers/kernelsu/Kconfig"|# source "drivers/kernelsu/Kconfig"|' drivers/Kconfig
 
           # Disable problematic vendor drivers (camera, display, clk debug)
+          sed -i 's/^CONFIG_TECHPACK_CAMERA=y/CONFIG_TECHPACK_CAMERA=n/' .config 2>/dev/null || true
           sed -i 's/^CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=y/CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=n/' .config
-          sed -i 's/^CONFIG_TECHPACK_DISPLAY_HWC_OSS=y/CONFIG_TECHPACK_DISPLAY_HWC_OSS=n/' .config
           sed -i 's/^CONFIG_TECHPACK_DISPLAY=y/CONFIG_TECHPACK_DISPLAY=n/' .config 2>/dev/null || true
+          sed -i 's/^CONFIG_TECHPACK_DISPLAY_HWC_OSS=y/CONFIG_TECHPACK_DISPLAY_HWC_OSS=n/' .config
           sed -i 's/^CONFIG_MSM_CLK_DEBUG=y/CONFIG_MSM_CLK_DEBUG=n/' .config 2>/dev/null || true
           sed -i 's/^CONFIG_QCOM_CLK_DEBUG=y/CONFIG_QCOM_CLK_DEBUG=n/' .config 2>/dev/null || true
           sed -i 's/^CONFIG_CLK_DEBUG=y/CONFIG_CLK_DEBUG=n/' .config 2>/dev/null || true
 
-          # Fix missing cam_req_mgr_interface.h include in cam_trace.h
+          # Fix missing include paths in trace headers (for Clang/LLVM builds)
+          # 1. clk-debug.c: missing './trace.h'
+          sed -i 's|#include "trace.h"|#include "trace/trace.h"|' drivers/clk/qcom/clk-debug.c 2>/dev/null || true
+          # 2. cam_trace.h: missing 'cam_req_mgr_core.h'
           if [ -f techpack/camera/drivers/cam_utils/cam_trace.h ]; then
             sed -i 's|#include "cam_req_mgr_interface.h"|#include "../cam_req_mgr/cam_req_mgr_interface.h"|' techpack/camera/drivers/cam_utils/cam_trace.h
+            sed -i 's|#include "cam_req_mgr_core.h"|#include "../cam_req_mgr/cam_req_mgr_core.h"|' techpack/camera/drivers/cam_utils/cam_trace.h
           fi
+          # 3. dsi_pll_10nm.c: missing './pll_trace.h'
+          sed -i 's|#include "pll_trace.h"|#include "../pll_trace.h"|' techpack/display/pll/dsi_pll_10nm.c 2>/dev/null || true
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -101,8 +108,9 @@ jobs:
           export LD=ld.lld-21
           export LLVM=1
 
-          make Image dtbo.img modules -j$(nproc) || \
-          make Image dtbo.img dtbs modules -j$(nproc)
+          # Try with full parallelism; if that fails, fall back to single‑job (avoids pipe I/O errors)
+          make -j$(nproc) Image dtbo.img dtbs modules || \
+          make -j1 Image dtbo.img dtbs modules
 
       - name: Package as AnyKernel3 ZIP
         run: |
