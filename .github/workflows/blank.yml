@@ -17,8 +17,17 @@ jobs:
 
       - name: Clone Kernel Source
         run: |
-          # CRITICAL FIX: Added --recursive to automatically download Waddah's integrated KernelSU submodules
-          git clone --recursive -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
+          git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
+
+      - name: Pull and Link KernelSU Source
+        run: |
+          cd kernel
+          # Ensure any existing empty folder or broken symlink is removed
+          rm -rf drivers/kernelsu
+          
+          # Force clone KernelSU-Next directly into the exact path expected by drivers/Kconfig
+          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next drivers/kernelsu
+          echo "KernelSU source successfully placed in drivers/kernelsu"
 
       - name: Patch Kernel Source (Fix GCC Hard Errors)
         run: |
@@ -37,7 +46,7 @@ jobs:
           
           make O=out cas_defconfig
           
-          # Enable ReSukiSU / KernelSU Natively
+          # Enable ReSukiSU / KernelSU
           echo "CONFIG_KSU=y" >> out/.config
           echo "CONFIG_KPROBES=y" >> out/.config
           
@@ -59,7 +68,7 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=aarch64-linux-gnu-gcc
           
-          # Build with KCFLAGS to suppress format warnings and build smoothly to 100%
+          # Build with KCFLAGS to suppress format warnings
           make -j$(nproc) O=out KCFLAGS="-Wno-error" Image.gz dtbo.img modules
           
           echo "Build finished!"
@@ -70,7 +79,7 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3 anykernel
           cd anykernel
           
-          # Configure AnyKernel3 for Mi 10 Ultra (cas) - A Only Partition Layout
+          # Configure AnyKernel3 for Mi 10 Ultra (cas) - A Only Partition
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
@@ -79,7 +88,7 @@ jobs:
           cp ../kernel/out/arch/arm64/boot/Image.gz .
           cp ../kernel/out/arch/arm64/boot/dtbo.img .
           
-          # Copy compiled WiFi modules into vendor path for target platform loading
+          # Copy compiled WiFi modules into vendor structure
           mkdir -p modules/vendor/lib/modules
           find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
