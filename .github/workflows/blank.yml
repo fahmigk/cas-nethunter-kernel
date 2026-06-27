@@ -83,13 +83,9 @@ jobs:
           sed -i 's/^CONFIG_QCOM_CLK_DEBUG=y/CONFIG_QCOM_CLK_DEBUG=n/' .config 2>/dev/null || true
           sed -i 's/^CONFIG_CLK_DEBUG=y/CONFIG_CLK_DEBUG=n/' .config 2>/dev/null || true
 
-          # Patch header issues for clk-debug and cam_req_mgr
-          # 1. Disable clk-debug by removing its object from Makefile
-          sed -i 's/^obj-$(CONFIG_QCOM_CLK_DEBUG) += clk-debug.o/# obj-$(CONFIG_QCOM_CLK_DEBUG) += clk-debug.o/' drivers/clk/qcom/Makefile
-
-          # 2. Fix missing cam_req_mgr_core.h include in cam_trace.h
+          # Fix missing cam_req_mgr_interface.h include in cam_trace.h
           if [ -f techpack/camera/drivers/cam_utils/cam_trace.h ]; then
-            sed -i 's|#include "cam_req_mgr_core.h"|#include "../cam_req_mgr/cam_req_mgr_core.h"|' techpack/camera/drivers/cam_utils/cam_trace.h
+            sed -i 's|#include "cam_req_mgr_interface.h"|#include "../cam_req_mgr/cam_req_mgr_interface.h"|' techpack/camera/drivers/cam_utils/cam_trace.h
           fi
 
           export ARCH=arm64
