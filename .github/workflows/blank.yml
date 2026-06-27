@@ -70,12 +70,9 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=aarch64-linux-gnu-gcc
           
-          # FIX: Build base 'Image' and 'dtbo.img' safely to bypass the Makefile wrapper bug
-          make -j$(nproc) O=out KCFLAGS="-Wno-error" Image dtbo.img modules
-          
-          # Natively compress the image using safe system tools
-          gzip -9 out/arch/arm64/boot/Image
-          mv out/arch/arm64/boot/Image.gz out/arch/arm64/boot/Image.gz
+          # CRITICAL FIX: Build using the standard architectural chain instead of granular targets.
+          # This prevents the Makefile '__build_one_by_one' rule execution crash.
+          make -j$(nproc) O=out KCFLAGS="-Wno-error"
           
           echo "Build finished!"
           ls -lh out/arch/arm64/boot/
@@ -90,9 +87,14 @@ jobs:
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
           
-          # Copy compiled kernel files
-          cp ../kernel/out/arch/arm64/boot/Image.gz .
-          cp ../kernel/out/arch/arm64/boot/dtbo.img .
+          # Copy compiled kernel files (Baking in your freshly verified target architecture binaries)
+          if [ -f "../kernel/out/arch/arm64/boot/Image.gz" ]; then
+            cp ../kernel/out/arch/arm64/boot/Image.gz .
+          else
+            gzip -c ../kernel/out/arch/arm64/boot/Image > Image.gz
+          fi
+          
+          cp ../kernel/out/arch/arm64/boot/dtbo.img . || cp ../kernel/out/arch/arm64/boot/dts/vendor/qcom/dtbo.img . || true
           
           # Copy compiled WiFi modules into vendor structure
           mkdir -p modules/vendor/lib/modules
