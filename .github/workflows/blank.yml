@@ -21,7 +21,7 @@ jobs:
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth 1 clang-toolchain
           echo "$PWD/clang-toolchain/clang-r487747/bin" >> $GITHUB_PATH
 
-      - name: Apply custom patches (if you add any)
+      - name: Apply custom patches (if you have any)
         run: |
           if [ -d "patches" ]; then
             for patch in patches/*.patch; do
@@ -37,25 +37,29 @@ jobs:
           # Use your stock config
           cp stock_config.txt .config
 
-          # Enable all common external USB WiFi adapters + monitor mode
-          scripts/config --enable CONFIG_CFG80211
-          scripts/config --enable CONFIG_MAC80211
-          scripts/config --enable CONFIG_MAC80211_DEBUGFS
-          scripts/config --enable CONFIG_MAC80211_MESH
+          # Enable all required features using sed (robust method)
+          sed -i 's/^# CONFIG_CFG80211 is not set/CONFIG_CFG80211=y/' .config
+          sed -i 's/^CONFIG_CFG80211=m/CONFIG_CFG80211=y/' .config
+          sed -i 's/^# CONFIG_MAC80211 is not set/CONFIG_MAC80211=y/' .config
+          sed -i 's/^CONFIG_MAC80211=m/CONFIG_MAC80211=y/' .config
+          sed -i 's/^# CONFIG_MAC80211_DEBUGFS is not set/CONFIG_MAC80211_DEBUGFS=y/' .config
+          sed -i 's/^# CONFIG_MAC80211_MESH is not set/CONFIG_MAC80211_MESH=y/' .config
           
-          # Popular USB WiFi chips
-          scripts/config --enable CONFIG_ATH9K
-          scripts/config --enable CONFIG_ATH9K_HW
-          scripts/config --enable CONFIG_USB_ATH9K
-          scripts/config --enable CONFIG_RTL88X2BU
-          scripts/config --enable CONFIG_RTL8812AU
-          scripts/config --enable CONFIG_RTL8821CU
-          scripts/config --enable CONFIG_RTL8188EU
-          scripts/config --enable CONFIG_MT7610U
-          scripts/config --enable CONFIG_MT7612U
+          # Enable common USB WiFi drivers
+          sed -i 's/^# CONFIG_ATH9K is not set/CONFIG_ATH9K=y/' .config
+          sed -i 's/^CONFIG_ATH9K=m/CONFIG_ATH9K=y/' .config
+          sed -i 's/^# CONFIG_ATH9K_HW is not set/CONFIG_ATH9K_HW=y/' .config
+          sed -i 's/^CONFIG_ATH9K_HW=m/CONFIG_ATH9K_HW=y/' .config
+          sed -i 's/^# CONFIG_USB_ATH9K is not set/CONFIG_USB_ATH9K=y/' .config
+          sed -i 's/^# CONFIG_RTL88X2BU is not set/CONFIG_RTL88X2BU=y/' .config
+          sed -i 's/^# CONFIG_RTL8812AU is not set/CONFIG_RTL8812AU=y/' .config
+          sed -i 's/^# CONFIG_RTL8821CU is not set/CONFIG_RTL8821CU=y/' .config
+          sed -i 's/^# CONFIG_RTL8188EU is not set/CONFIG_RTL8188EU=y/' .config
+          sed -i 's/^# CONFIG_MT7610U is not set/CONFIG_MT7610U=y/' .config
+          sed -i 's/^# CONFIG_MT7612U is not set/CONFIG_MT7612U=y/' .config
 
-          # Finalize config
-          make olddefconfig
+          # Finalize config and resolve dependencies
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 olddefconfig
 
       - name: Compile Kernel, dtb, dtbo & modules
         run: |
