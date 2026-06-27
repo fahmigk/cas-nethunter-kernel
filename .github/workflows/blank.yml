@@ -36,9 +36,13 @@ jobs:
           cd clang-toolchain
           git sparse-checkout set clang-r487747
           git checkout
-          # Make sure binaries are executable
-          chmod +x clang-r487747/bin/*
+          # Add the bin folder to PATH (the binaries already have execute permissions)
           echo "$PWD/clang-r487747/bin" >> $GITHUB_PATH
+          # Sanity check: confirm ld.lld exists
+          if [ ! -f clang-r487747/bin/ld.lld ]; then
+            echo "ERROR: ld.lld not found!"
+            exit 1
+          fi
           cd ..
 
       - name: Clone the actual kernel source
@@ -89,11 +93,11 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LLVM=1
-          # Force the use of our downloaded ld.lld
+          # Explicitly set LD to the absolute path of our downloaded ld.lld
           export LD=$PWD/../clang-toolchain/clang-r487747/bin/ld.lld
-          # Also add clang bin directory to PATH for good measure
+          # Also add the clang bin directory to PATH for good measure
           export PATH=$PWD/../clang-toolchain/clang-r487747/bin:$PATH
-          
+
           make Image dtbo.img dtb modules -j$(nproc) || \
           make dtbo.img dtb modules -j$(nproc) || \
           make all dtbo.img dtb modules -j$(nproc)
