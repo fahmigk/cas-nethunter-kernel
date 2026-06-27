@@ -34,15 +34,16 @@ jobs:
           git clone --depth 1 --filter=blob:none --single-branch --branch main \
             https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-toolchain
           cd clang-toolchain
-          git sparse-checkout set clang-r487747
+          # Sparse checkout: fetch the clang-r* folder (any version)
+          git sparse-checkout set clang-r*
           git checkout
-          # Add the bin folder to PATH (the binaries already have execute permissions)
-          echo "$PWD/clang-r487747/bin" >> $GITHUB_PATH
-          # Sanity check: confirm ld.lld exists
-          if [ ! -f clang-r487747/bin/ld.lld ]; then
-            echo "ERROR: ld.lld not found!"
+          # Find the directory containing ld.lld
+          CLANG_BIN=$(find . -path "*/bin/ld.lld" -exec dirname {} \; | head -1)
+          if [ -z "$CLANG_BIN" ]; then
+            echo "ERROR: ld.lld not found in clang-toolchain"
             exit 1
           fi
+          echo "$PWD/$CLANG_BIN" >> $GITHUB_PATH
           cd ..
 
       - name: Clone the actual kernel source
@@ -93,10 +94,15 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LLVM=1
-          # Explicitly set LD to the absolute path of our downloaded ld.lld
-          export LD=$PWD/../clang-toolchain/clang-r487747/bin/ld.lld
-          # Also add the clang bin directory to PATH for good measure
-          export PATH=$PWD/../clang-toolchain/clang-r487747/bin:$PATH
+          # Get the absolute path to ld.lld from the clang-toolchain directory
+          LD_PATH=$(find ../clang-toolchain -name ld.lld -type f | head -1)
+          if [ -z "$LD_PATH" ]; then
+            echo "ERROR: ld.lld not found!"
+            exit 1
+          fi
+          export LD=$LD_PATH
+          # Also add the directory to PATH for good measure
+          export PATH=$(dirname $LD_PATH):$PATH
 
           make Image dtbo.img dtb modules -j$(nproc) || \
           make dtbo.img dtb modules -j$(nproc) || \
