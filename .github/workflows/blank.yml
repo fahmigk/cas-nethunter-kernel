@@ -44,7 +44,7 @@ jobs:
         run: |
           git clone ${{ env.KERNEL_SOURCE_URL }} --depth 1 --branch ${{ env.KERNEL_BRANCH }} kernel_source
 
-      - name: Configure kernel for monitor mode
+      - name: Configure kernel for monitor mode and disable problematic drivers
         run: |
           cp stock_config.txt kernel_source/.config
           cd kernel_source
@@ -68,7 +68,7 @@ jobs:
           sed -i 's/^# CONFIG_MT7610U is not set/CONFIG_MT7610U=y/' .config
           sed -i 's/^# CONFIG_MT7612U is not set/CONFIG_MT7612U=y/' .config
 
-          # Disable KernelSU to avoid missing Kconfig errors
+          # Disable KernelSU
           sed -i 's/^CONFIG_KSU=y/CONFIG_KSU=n/' .config
           sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=n/' .config
           sed -i '/^CONFIG_KSU_/d' .config
@@ -76,6 +76,12 @@ jobs:
 
           # Comment out the missing KernelSU Kconfig source line
           sed -i 's|source "drivers/kernelsu/Kconfig"|# source "drivers/kernelsu/Kconfig"|' drivers/Kconfig
+
+          # Disable problematic vendor drivers (camera, display, clk debug)
+          sed -i 's/^CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=y/CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=n/' .config
+          sed -i 's/^CONFIG_TECHPACK_DISPLAY_HWC_OSS=y/CONFIG_TECHPACK_DISPLAY_HWC_OSS=n/' .config
+          sed -i 's/^CONFIG_MSM_CLK_DEBUG=y/CONFIG_MSM_CLK_DEBUG=n/' .config 2>/dev/null || true
+          sed -i 's/^CONFIG_QCOM_CLK_DEBUG=y/CONFIG_QCOM_CLK_DEBUG=n/' .config 2>/dev/null || true
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -90,7 +96,6 @@ jobs:
           export LD=ld.lld-21
           export LLVM=1
 
-          # 🔥 FIXED: removed 'dtb' target and added 'dtbs' as a fallback
           make Image dtbo.img modules -j$(nproc) || \
           make Image dtbo.img dtbs modules -j$(nproc)
 
@@ -106,7 +111,6 @@ jobs:
             cp kernel_source/arch/arm64/boot/dtbo.img AnyKernel3/
           fi
 
-          # Find any generated dtb automatically
           find kernel_source/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/dtb \; -quit || true
           find kernel_source -name '*.ko' -exec cp {} AnyKernel3/modules/ \;
 
