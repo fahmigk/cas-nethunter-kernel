@@ -44,12 +44,12 @@ jobs:
         run: |
           git clone ${{ env.KERNEL_SOURCE_URL }} --depth 1 --branch ${{ env.KERNEL_BRANCH }} kernel_source
 
-      - name: Configure kernel for monitor mode and disable problematic drivers
+      - name: Configure kernel and apply hotfixes
         run: |
           cp stock_config.txt kernel_source/.config
           cd kernel_source
 
-          # Enable WiFi and monitor mode features
+          # Enable WiFi and monitor mode
           sed -i 's/^# CONFIG_CFG80211 is not set/CONFIG_CFG80211=y/' .config
           sed -i 's/^CONFIG_CFG80211=m/CONFIG_CFG80211=y/' .config
           sed -i 's/^# CONFIG_MAC80211 is not set/CONFIG_MAC80211=y/' .config
@@ -73,15 +73,24 @@ jobs:
           sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=n/' .config
           sed -i '/^CONFIG_KSU_/d' .config
           echo '# CONFIG_KSU is not set' >> .config
-
-          # Comment out the missing KernelSU Kconfig source line
           sed -i 's|source "drivers/kernelsu/Kconfig"|# source "drivers/kernelsu/Kconfig"|' drivers/Kconfig
 
           # Disable problematic vendor drivers (camera, display, clk debug)
           sed -i 's/^CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=y/CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=n/' .config
           sed -i 's/^CONFIG_TECHPACK_DISPLAY_HWC_OSS=y/CONFIG_TECHPACK_DISPLAY_HWC_OSS=n/' .config
+          sed -i 's/^CONFIG_TECHPACK_DISPLAY=y/CONFIG_TECHPACK_DISPLAY=n/' .config 2>/dev/null || true
           sed -i 's/^CONFIG_MSM_CLK_DEBUG=y/CONFIG_MSM_CLK_DEBUG=n/' .config 2>/dev/null || true
           sed -i 's/^CONFIG_QCOM_CLK_DEBUG=y/CONFIG_QCOM_CLK_DEBUG=n/' .config 2>/dev/null || true
+          sed -i 's/^CONFIG_CLK_DEBUG=y/CONFIG_CLK_DEBUG=n/' .config 2>/dev/null || true
+
+          # Patch header issues for clk-debug and cam_req_mgr
+          # 1. Disable clk-debug by removing its object from Makefile
+          sed -i 's/^obj-$(CONFIG_QCOM_CLK_DEBUG) += clk-debug.o/# obj-$(CONFIG_QCOM_CLK_DEBUG) += clk-debug.o/' drivers/clk/qcom/Makefile
+
+          # 2. Fix missing cam_req_mgr_core.h include in cam_trace.h
+          if [ -f techpack/camera/drivers/cam_utils/cam_trace.h ]; then
+            sed -i 's|#include "cam_req_mgr_core.h"|#include "../cam_req_mgr/cam_req_mgr_core.h"|' techpack/camera/drivers/cam_utils/cam_trace.h
+          fi
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
