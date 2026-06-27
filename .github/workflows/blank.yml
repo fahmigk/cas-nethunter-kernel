@@ -21,7 +21,7 @@ jobs:
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth 1 clang-toolchain
           echo "$PWD/clang-toolchain/clang-r487747/bin" >> $GITHUB_PATH
 
-      - name: Apply custom patches (if you have any)
+      - name: Apply custom patches (if any)
         run: |
           if [ -d "patches" ]; then
             for patch in patches/*.patch; do
@@ -34,18 +34,14 @@ jobs:
 
       - name: Configure kernel for full monitor mode
         run: |
-          # Use your stock config
           cp stock_config.txt .config
 
-          # Enable all required features using sed (robust method)
           sed -i 's/^# CONFIG_CFG80211 is not set/CONFIG_CFG80211=y/' .config
           sed -i 's/^CONFIG_CFG80211=m/CONFIG_CFG80211=y/' .config
           sed -i 's/^# CONFIG_MAC80211 is not set/CONFIG_MAC80211=y/' .config
           sed -i 's/^CONFIG_MAC80211=m/CONFIG_MAC80211=y/' .config
           sed -i 's/^# CONFIG_MAC80211_DEBUGFS is not set/CONFIG_MAC80211_DEBUGFS=y/' .config
           sed -i 's/^# CONFIG_MAC80211_MESH is not set/CONFIG_MAC80211_MESH=y/' .config
-          
-          # Enable common USB WiFi drivers
           sed -i 's/^# CONFIG_ATH9K is not set/CONFIG_ATH9K=y/' .config
           sed -i 's/^CONFIG_ATH9K=m/CONFIG_ATH9K=y/' .config
           sed -i 's/^# CONFIG_ATH9K_HW is not set/CONFIG_ATH9K_HW=y/' .config
@@ -58,8 +54,7 @@ jobs:
           sed -i 's/^# CONFIG_MT7610U is not set/CONFIG_MT7610U=y/' .config
           sed -i 's/^# CONFIG_MT7612U is not set/CONFIG_MT7612U=y/' .config
 
-          # Finalize config and resolve dependencies
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 olddefconfig
+          yes "" | make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 oldconfig
 
       - name: Compile Kernel, dtb, dtbo & modules
         run: |
@@ -70,14 +65,11 @@ jobs:
         run: |
           mkdir -p AnyKernel3/META-INF/com/google/android
           mkdir -p AnyKernel3/modules
-
-          # Copy required binaries
           cp arch/arm64/boot/Image AnyKernel3/
           cp arch/arm64/boot/dtb AnyKernel3/
           cp arch/arm64/boot/dtbo.img AnyKernel3/
           find . -name '*.ko' -exec cp {} AnyKernel3/modules/ \;
 
-          # Generate minimal AnyKernel3 script
           cat > AnyKernel3/anykernel.sh << 'EOF'
           #!/sbin/sh
           export KERNEL=Image
@@ -89,11 +81,10 @@ jobs:
           EOF
           chmod +x AnyKernel3/anykernel.sh
 
-          # Create the flashable zip
           cd AnyKernel3
           zip -r9 ../Mi10Ultra_MonitorMode_AnyKernel3.zip *
 
-      - name: Upload the final kernel ZIP
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Mi10Ultra_MonitorMode_Kernel
