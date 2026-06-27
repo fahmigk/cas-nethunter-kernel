@@ -35,7 +35,6 @@ jobs:
           sudo add-apt-repository -y "deb https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main"
           sudo apt update
           sudo apt install -y clang-21 lld-21
-          # Set environment for the rest of the job
           echo "CC=clang-21" >> $GITHUB_ENV
           echo "LD=ld.lld-21" >> $GITHUB_ENV
           echo "LLVM=1" >> $GITHUB_ENV
@@ -80,10 +79,9 @@ jobs:
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          # Use the system linker (not LLVM) for config step
           yes "" | make oldconfig
 
-      - name: Compile Kernel, dtb, dtbo & modules
+      - name: Compile Kernel, dtbo, and modules
         run: |
           cd kernel_source
           export ARCH=arm64
@@ -91,11 +89,10 @@ jobs:
           export CC=clang-21
           export LD=ld.lld-21
           export LLVM=1
-          # The PATH already includes /usr/lib/llvm-21/bin
 
-          make Image dtbo.img dtb modules -j$(nproc) || \
-          make dtbo.img dtb modules -j$(nproc) || \
-          make all dtbo.img dtb modules -j$(nproc)
+          # 🔥 FIXED: removed 'dtb' target and added 'dtbs' as a fallback
+          make Image dtbo.img modules -j$(nproc) || \
+          make Image dtbo.img dtbs modules -j$(nproc)
 
       - name: Package as AnyKernel3 ZIP
         run: |
@@ -109,6 +106,7 @@ jobs:
             cp kernel_source/arch/arm64/boot/dtbo.img AnyKernel3/
           fi
 
+          # Find any generated dtb automatically
           find kernel_source/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/dtb \; -quit || true
           find kernel_source -name '*.ko' -exec cp {} AnyKernel3/modules/ \;
 
