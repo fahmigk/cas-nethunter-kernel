@@ -1,148 +1,96 @@
-name: Build Mi10 Ultra NetHunter & ReSukiSU Release
+name: Build Monitor-Mode Kernel (Mi 10 Ultra)
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Repository
+      - name: Checkout your own repository
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git automake flex lzop bison \
-            gperf build-essential zip curl zlib1g-dev g++-multilib \
-            libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
-            squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool \
-            make optipng maven libssl-dev pwgen libswitch-perl \
-            policycoreutils minicom libxml-sax-base-perl libxml-simple-perl \
-            bc libc6-dev-i386 lib32ncurses5-dev x11proto-core-dev \
-            libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+          sudo apt update
+          sudo apt install -y bc bison flex device-tree-compiler git make python3 kmod cpio rsync zip
+          sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
-      - name: Download Clang Toolchain (Proton Clang)
+      - name: Download Clang 21.0.0
         run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth 1 clang-toolchain
+          echo "$PWD/clang-toolchain/clang-r487747/bin" >> $GITHUB_PATH
 
-      - name: Clone Kernel Source (Deep Submodule Fix)
+      - name: Apply custom patches (if you add any)
         run: |
-          git clone -b android16-aptusitu https://github.com/Searchur/Xiaomi_Redmi_SM8250_SukiSU_nonGKI_kernel.git kernel-source
-          cd kernel-source
-          git submodule update --init --recursive
+          if [ -d "patches" ]; then
+            for patch in patches/*.patch; do
+              echo "Applying $patch"
+              patch -p1 < $patch
+            done
+          else
+            echo "No patches folder found. Skipping."
+          fi
 
-      - name: Configure and Patch Kernel
+      - name: Configure kernel for full monitor mode
         run: |
-          cd kernel-source
-          mkdir -p out
-          
-          cp ../stock_config out/.config
-          
-          touch .scmversion
-          sed -i 's/echo "\$res\$git_version"/echo "\$res"/g' scripts/setlocalversion || true
-          
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' include/net/netprio_cgroup.h || true
-          sed -i 's/css->cgroup->id/cgroup_id(css->cgroup)/g' net/core/netprio_cgroup.c || true
-          
-          find . -type f -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          find . -type f -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          
-          ./scripts/config --file out/.config -e CONFIG_MODULES -e CONFIG_WIRELESS -e CONFIG_WIRELESS_EXT -e CONFIG_CFG80211 -e CONFIG_MAC80211
-          ./scripts/config --file out/.config -e CONFIG_OVERLAY_FS -e CONFIG_DEBUG_FS -e CONFIG_SECURITY
-          
-          # Force hardcoding configuration lines directly to avoid defconfig stripping
-          echo "CONFIG_KPROBES=y" >> out/.config
-          echo "CONFIG_HAVE_KPROBES=y" >> out/.config
-          echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
-          echo "CONFIG_KALLSYMS=y" >> out/.config
-          echo "CONFIG_KALLSYMS_ALL=y" >> out/.config
-          echo "CONFIG_KSU=y" >> out/.config
-          echo "CONFIG_SUKISU=y" >> out/.config
-          echo "CONFIG_KSU_SUSFS=y" >> out/.config
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> out/.config
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> out/.config
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> out/.config
+          # Use your stock config
+          cp stock_config.txt .config
 
-      - name: Inject NetHunter Drivers Natively Into Kernel Tree
-        run: |
-          cd kernel-source
-          git clone --depth=1 -b v5.3.9 https://github.com/aircrack-ng/rtl8188eus.git drivers/net/wireless/realtek/rtl8188eus
-          git clone --depth=1 -b v5.6.4.2 https://github.com/aircrack-ng/rtl8812au.git drivers/net/wireless/realtek/rtl8812au
-          echo "obj-m += rtl8188eus/" >> drivers/net/wireless/realtek/Makefile
-          echo "obj-m += rtl8812au/" >> drivers/net/wireless/realtek/Makefile
+          # Enable all common external USB WiFi adapters + monitor mode
+          scripts/config --enable CONFIG_CFG80211
+          scripts/config --enable CONFIG_MAC80211
+          scripts/config --enable CONFIG_MAC80211_DEBUGFS
+          scripts/config --enable CONFIG_MAC80211_MESH
+          
+          # Popular USB WiFi chips
+          scripts/config --enable CONFIG_ATH9K
+          scripts/config --enable CONFIG_ATH9K_HW
+          scripts/config --enable CONFIG_USB_ATH9K
+          scripts/config --enable CONFIG_RTL88X2BU
+          scripts/config --enable CONFIG_RTL8812AU
+          scripts/config --enable CONFIG_RTL8821CU
+          scripts/config --enable CONFIG_RTL8188EU
+          scripts/config --enable CONFIG_MT7610U
+          scripts/config --enable CONFIG_MT7612U
 
-      - name: Compile the Full Kernel & Drivers
-        run: |
-          cd kernel-source
-          export PATH="$(pwd)/../clang/bin:$PATH"
-          export LOCALVERSION="-aptusitu-perf"
-          
-          MAKE_ARGS="O=out ARCH=arm64 SUBARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm WERROR=0 KCFLAGS=-Wno-unknown-warning-option KSU=true KSU_SUKISU=true KSU_SUSFS=true LOCALVERSION=${LOCALVERSION}"
-          
-          yes "" | make $MAKE_ARGS olddefconfig
-          make -j$(nproc --all) $MAKE_ARGS Image.gz-dtb modules
-          make $MAKE_ARGS modules_install INSTALL_MOD_PATH=modules_install INSTALL_MOD_STRIP=0
+          # Finalize config
+          make olddefconfig
 
-      - name: Package Universal AOSP Flasheable ZIP (AnyKernel3)
+      - name: Compile Kernel, dtb, dtbo & modules
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          cd AnyKernel3
-          
-          cat << 'EOF' > anykernel.sh
-          properties() { '
-          kernel.string=Mi 10 Ultra NetHunter + ReSukiSU Kernel
-          do.devicecheck=0
-          do.modules=1
-          do.systemless=1
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=cas
-          '; }
-          boot_attributes() {
-          set_perm_recursive 0 0 755 644 $RAMDISK/*;
-          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
-          }
-          BLOCK=/dev/block/by-name/boot;
-          IS_SLOT_DEVICE=auto;
-          RAMDISK_COMPRESSION=auto;
-          PATCH_VBMETA_FLAG=auto;
-          
-          . tools/ak3-core.sh;
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 -j$(nproc) \
+            Image dtbo.img dtb modules
+
+      - name: Package as AnyKernel3 ZIP
+        run: |
+          mkdir -p AnyKernel3/META-INF/com/google/android
+          mkdir -p AnyKernel3/modules
+
+          # Copy required binaries
+          cp arch/arm64/boot/Image AnyKernel3/
+          cp arch/arm64/boot/dtb AnyKernel3/
+          cp arch/arm64/boot/dtbo.img AnyKernel3/
+          find . -name '*.ko' -exec cp {} AnyKernel3/modules/ \;
+
+          # Generate minimal AnyKernel3 script
+          cat > AnyKernel3/anykernel.sh << 'EOF'
+          #!/sbin/sh
+          export KERNEL=Image
+          export DTBO=dtbo.img
+          export DTB=dtb
+          export MODULESDIR=modules
           dump_boot;
           write_boot;
           EOF
-          
-          cp ../kernel-source/out/arch/arm64/boot/Image.gz-dtb ./
-          mkdir -p modules/vendor/lib/modules/
-          
-          find ../kernel-source/out/modules_install/ -type f -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
-          
-          cd modules/vendor/lib/modules/
-          touch modules.dep modules.alias modules.softdep
-          ls -1 *.ko | sed 's/\.ko$//' > modules.load
-          cd ../../../../
-          
-          zip -r9 ../NetHunter-Kernel-Mi10Ultra.zip * -x .git README.md *anykernel.zip
+          chmod +x AnyKernel3/anykernel.sh
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Create the flashable zip
+          cd AnyKernel3
+          zip -r9 ../Mi10Ultra_MonitorMode_AnyKernel3.zip *
+
+      - name: Upload the final kernel ZIP
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: "Mi10Ultra-NetHunter-${{ github.run_id }}"
-          name: "Mi 10 Ultra Universal NetHunter + ReSukiSU Kernel"
-          body: |
-            **Automated AnyKernel3 build for Xiaomi Mi 10 Ultra (SM8250).**
-            
-            ### Release Highlights:
-            * **vDSO & GNU Utilities Patch Integrated**
-            * **Deep Synchronization Framework Submodules Forced**
-            * **Hardcoded Root Definitions (Fixes SECCOMP App Execution Error)**
-          draft: false
-          prerelease: false
-          files: NetHunter-Kernel-Mi10Ultra.zip
+          name: Mi10Ultra_MonitorMode_Kernel
+          path: Mi10Ultra_MonitorMode_AnyKernel3.zip
