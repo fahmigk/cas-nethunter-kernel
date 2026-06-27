@@ -3,6 +3,10 @@ name: Build Monitor-Mode Kernel (Mi 10 Ultra)
 on:
   workflow_dispatch:
 
+env:
+  KERNEL_SOURCE_URL: 'https://github.com/wshamroukh/android_kernel_xiaomi_sm8250'
+  KERNEL_BRANCH: 'android16-aptusitu'
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -14,7 +18,7 @@ jobs:
           sudo docker system prune -af || true
           df -h
 
-      - name: Checkout your repository (shallow)
+      - name: Checkout your config repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -35,9 +39,14 @@ jobs:
           echo "$PWD/clang-r487747/bin" >> $GITHUB_PATH
           cd ..
 
+      - name: Clone the actual kernel source
+        run: |
+          git clone ${{ env.KERNEL_SOURCE_URL }} --depth 1 --branch ${{ env.KERNEL_BRANCH }} kernel_source
+
       - name: Configure kernel for monitor mode
         run: |
-          cp stock_config.txt .config
+          cp stock_config.txt kernel_source/.config
+          cd kernel_source
 
           sed -i 's/^# CONFIG_CFG80211 is not set/CONFIG_CFG80211=y/' .config
           sed -i 's/^CONFIG_CFG80211=m/CONFIG_CFG80211=y/' .config
@@ -57,49 +66,36 @@ jobs:
           sed -i 's/^# CONFIG_MT7610U is not set/CONFIG_MT7610U=y/' .config
           sed -i 's/^# CONFIG_MT7612U is not set/CONFIG_MT7612U=y/' .config
 
-      - name: Build kernel (try default, then all, then vmlinux)
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export LLVM=1
+          yes "" | make oldconfig
+
+      - name: Compile Kernel, dtb, dtbo & modules
         run: |
+          cd kernel_source
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LLVM=1
 
-          echo "Attempting default make..."
-          make -j$(nproc) || echo "Default make failed, trying 'all'..."
-
-          if [ ! -f arch/arm64/boot/Image ]; then
-            echo "No Image found, trying 'make all'..."
-            make all -j$(nproc) || echo "make all failed, trying 'vmlinux'..."
-          fi
-
-          if [ ! -f arch/arm64/boot/Image ]; then
-            echo "Still no Image, trying 'make vmlinux'..."
-            make vmlinux -j$(nproc) || echo "make vmlinux failed."
-          fi
-
-          # Build device tree blobs and modules
-          make dtbs -j$(nproc)
-          make modules -j$(nproc)
+          make Image dtbo.img dtb modules -j$(nproc) || \
+          make dtbo.img dtb modules -j$(nproc) || \
+          make all dtbo.img dtb modules -j$(nproc)
 
       - name: Package as AnyKernel3 ZIP
         run: |
           mkdir -p AnyKernel3/META-INF/com/google/android
           mkdir -p AnyKernel3/modules
 
-          # Copy Image if found
-          if [ -f arch/arm64/boot/Image ]; then
-            cp arch/arm64/boot/Image AnyKernel3/
-          else
-            echo "WARNING: Image not found!"
+          if [ -f kernel_source/arch/arm64/boot/Image ]; then
+            cp kernel_source/arch/arm64/boot/Image AnyKernel3/
+          fi
+          if [ -f kernel_source/arch/arm64/boot/dtbo.img ]; then
+            cp kernel_source/arch/arm64/boot/dtbo.img AnyKernel3/
           fi
 
-          # Copy dtb (search for one)
-          find arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/dtb \; -quit || true
-
-          # Copy dtbo.img if exists (search whole tree)
-          find . -name "dtbo.img" -exec cp {} AnyKernel3/dtbo.img \; -quit || true
-
-          # Copy modules
-          find . -name '*.ko' -exec cp {} AnyKernel3/modules/ \;
+          find kernel_source/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/dtb \; -quit || true
+          find kernel_source -name '*.ko' -exec cp {} AnyKernel3/modules/ \;
 
           cat > AnyKernel3/anykernel.sh << 'EOF'
           #!/sbin/sh
