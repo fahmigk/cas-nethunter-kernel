@@ -1,151 +1,94 @@
-name: Build Monitor-Mode Kernel (Mi 10 Ultra)
+name: Build Mi10Ultra NetHunter Kernel
 
 on:
   workflow_dispatch:
-
-env:
-  KERNEL_SOURCE_URL: 'https://github.com/wshamroukh/android_kernel_xiaomi_sm8250'
-  KERNEL_BRANCH: 'android16-aptusitu'
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Free up runner disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          sudo rm -rf /opt/az /usr/local/azure /usr/local/share/boost /usr/local/share/chromium
-          sudo docker system prune -af || true
-          df -h
-
-      - name: Checkout your config repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Install build dependencies
+      - name: Install Build Dependencies
         run: |
-          sudo apt update
-          sudo apt install -y bc bison flex device-tree-compiler git make python3 kmod cpio rsync zip
-          sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu device-tree-compiler
 
-      - name: Install Clang 21 and LLD 21 from official LLVM repository
+      - name: Clone Kernel Source
         run: |
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository -y "deb https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main"
-          sudo apt update
-          sudo apt install -y clang-21 lld-21
-          echo "CC=clang-21" >> $GITHUB_ENV
-          echo "LD=ld.lld-21" >> $GITHUB_ENV
-          echo "LLVM=1" >> $GITHUB_ENV
-          # FIX 1: Enable Clang Integrated Assembler to prevent "Broken pipe" errors
-          echo "LLVM_IAS=1" >> $GITHUB_ENV
-          echo "/usr/lib/llvm-21/bin" >> $GITHUB_PATH
+          git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
 
-      - name: Clone the actual kernel source
+      - name: Patch Kernel Source (Fix GCC Hard Errors)
         run: |
-          git clone ${{ env.KERNEL_SOURCE_URL }} --depth 1 --branch ${{ env.KERNEL_BRANCH }} kernel_source
+          cd kernel
+          # Fix bpf_trace.c inline varargs hard error for GCC
+          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
+          echo "Patched bpf_trace.c successfully"
 
-      - name: Configure kernel and apply hotfixes
+      - name: Configure Kernel
         run: |
-          cp stock_config.txt kernel_source/.config
-          cd kernel_source
-
-          # Enable WiFi and monitor mode
-          sed -i 's/^# CONFIG_CFG80211 is not set/CONFIG_CFG80211=y/' .config
-          sed -i 's/^CONFIG_CFG80211=m/CONFIG_CFG80211=y/' .config
-          sed -i 's/^# CONFIG_MAC80211 is not set/CONFIG_MAC80211=y/' .config
-          sed -i 's/^CONFIG_MAC80211=m/CONFIG_MAC80211=y/' .config
-          sed -i 's/^# CONFIG_MAC80211_DEBUGFS is not set/CONFIG_MAC80211_DEBUGFS=y/' .config
-          sed -i 's/^# CONFIG_MAC80211_MESH is not set/CONFIG_MAC80211_MESH=y/' .config
-          sed -i 's/^# CONFIG_ATH9K is not set/CONFIG_ATH9K=y/' .config
-          sed -i 's/^CONFIG_ATH9K=m/CONFIG_ATH9K=y/' .config
-          sed -i 's/^# CONFIG_ATH9K_HW is not set/CONFIG_ATH9K_HW=y/' .config
-          sed -i 's/^CONFIG_ATH9K_HW=m/CONFIG_ATH9K_HW=y/' .config
-          sed -i 's/^# CONFIG_USB_ATH9K is not set/CONFIG_USB_ATH9K=y/' .config
-          sed -i 's/^# CONFIG_RTL88X2BU is not set/CONFIG_RTL88X2BU=y/' .config
-          sed -i 's/^# CONFIG_RTL8812AU is not set/CONFIG_RTL8812AU=y/' .config
-          sed -i 's/^# CONFIG_RTL8821CU is not set/CONFIG_RTL8821CU=y/' .config
-          sed -i 's/^# CONFIG_RTL8188EU is not set/CONFIG_RTL8188EU=y/' .config
-          sed -i 's/^# CONFIG_MT7610U is not set/CONFIG_MT7610U=y/' .config
-          sed -i 's/^# CONFIG_MT7612U is not set/CONFIG_MT7612U=y/' .config
-
-          # Disable KernelSU
-          sed -i 's/^CONFIG_KSU=y/CONFIG_KSU=n/' .config
-          sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=n/' .config
-          sed -i '/^CONFIG_KSU_/d' .config
-          echo '# CONFIG_KSU is not set' >> .config
-          sed -i 's|source "drivers/kernelsu/Kconfig"|# source "drivers/kernelsu/Kconfig"|' drivers/Kconfig
-
-          # Disable problematic vendor drivers (camera, display, clk debug)
-          sed -i 's/^CONFIG_TECHPACK_CAMERA=y/CONFIG_TECHPACK_CAMERA=n/' .config 2>/dev/null || true
-          sed -i 's/^CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=y/CONFIG_TECHPACK_CAMERA_XIAOMI_CAS=n/' .config
-          sed -i 's/^CONFIG_TECHPACK_DISPLAY=y/CONFIG_TECHPACK_DISPLAY=n/' .config 2>/dev/null || true
-          sed -i 's/^CONFIG_TECHPACK_DISPLAY_HWC_OSS=y/CONFIG_TECHPACK_DISPLAY_HWC_OSS=n/' .config
-          sed -i 's/^CONFIG_MSM_CLK_DEBUG=y/CONFIG_MSM_CLK_DEBUG=n/' .config 2>/dev/null || true
-          sed -i 's/^CONFIG_QCOM_CLK_DEBUG=y/CONFIG_QCOM_CLK_DEBUG=n/' .config 2>/dev/null || true
-          sed -i 's/^CONFIG_CLK_DEBUG=y/CONFIG_CLK_DEBUG=n/' .config 2>/dev/null || true
-
-          # FIX 2: clk-debug.c includes "trace.h" which doesn't exist. Just comment it out.
-          sed -i 's|^#include.*trace.h.*|// #include "trace.h" removed for build|' drivers/clk/qcom/clk-debug.c 2>/dev/null || true
-          
-          # FIX 3: dsi_pll_10nm.c includes "pll_trace.h". DO NOT change it to "../pll_trace.h". 
-          # (Removed the broken sed command for this file so it stays as "pll_trace.h")
-          
-          # FIX 4: cam_req_mgr_core.c is missing "cam_req_mgr_interface.h". Fix the include path.
-          sed -i 's|#include "cam_req_mgr_interface.h"|#include "cam_req_mgr/cam_req_mgr_interface.h"|' techpack/camera/drivers/cam_req_mgr/cam_req_mgr_core.c 2>/dev/null || true
-          sed -i 's|#include "cam_req_mgr_core.h"|#include "cam_req_mgr/cam_req_mgr_core.h"|' techpack/camera/drivers/cam_req_mgr/cam_req_mgr_core.c 2>/dev/null || true
-
+          cd kernel
           export ARCH=arm64
+          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          yes "" | make oldconfig
+          export CC=aarch64-linux-gnu-gcc
+          
+          make O=out cas_defconfig
+          
+          # Enable ReSukiSU / KernelSU
+          echo "CONFIG_KSU=y" >> out/.config
+          echo "CONFIG_KPROBES=y" >> out/.config
+          
+          # Enable NetHunter WiFi Drivers
+          echo "CONFIG_RTL8188EUS=m" >> out/.config
+          echo "CONFIG_RTL8812AU=m" >> out/.config
+          echo "CONFIG_RTL88X2BU=m" >> out/.config
+          echo "CONFIG_CFG80211=y" >> out/.config
+          echo "CONFIG_MAC80211=y" >> out/.config
+          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
+          
+          make O=out olddefconfig
 
-      - name: Compile Kernel, dtbo, and modules
+      - name: Build Kernel Image and Modules
         run: |
-          cd kernel_source
+          cd kernel
           export ARCH=arm64
+          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=clang-21
-          export LD=ld.lld-21
-          export LLVM=1
-          export LLVM_IAS=1
+          export CC=aarch64-linux-gnu-gcc
+          
+          # Build with KCFLAGS to suppress walt.h format warnings
+          make -j$(nproc) O=out KCFLAGS="-Wno-error" Image.gz dtbo.img modules
+          
+          echo "Build finished!"
+          ls -lh out/arch/arm64/boot/
 
-          # FIX 5: Use -j4 instead of -j$(nproc) to prevent Clang "Broken pipe" crashes
-          make -j4 Image dtbo.img dtbs modules || \
-          make -j1 Image dtbo.img dtbs modules
-
-      - name: Package as AnyKernel3 ZIP
+      - name: Clone AnyKernel3 and Package
         run: |
-          mkdir -p AnyKernel3/META-INF/com/google/android
-          mkdir -p AnyKernel3/modules
+          git clone https://github.com/osm0sis/AnyKernel3 anykernel
+          cd anykernel
+          
+          # Configure AnyKernel3 for Mi 10 Ultra (cas) - A Only Partition
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
+          sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
+          
+          # Copy compiled kernel files
+          cp ../kernel/out/arch/arm64/boot/Image.gz .
+          cp ../kernel/out/arch/arm64/boot/dtbo.img .
+          
+          # Copy compiled WiFi modules
+          mkdir -p modules
+          find ../kernel/out -name "*.ko" -exec cp {} modules/ \;
+          
+          # Create flashable ZIP
+          zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
+          echo "AnyKernel3 ZIP created!"
+          ls -lh ../NetHunter-cas-AnyKernel3.zip
 
-          if [ -f kernel_source/arch/arm64/boot/Image ]; then
-            cp kernel_source/arch/arm64/boot/Image AnyKernel3/
-          fi
-          if [ -f kernel_source/arch/arm64/boot/dtbo.img ]; then
-            cp kernel_source/arch/arm64/boot/dtbo.img AnyKernel3/
-          fi
-
-          find kernel_source/arch/arm64/boot/dts -name "*.dtb" -exec cp {} AnyKernel3/dtb \; -quit || true
-          find kernel_source -name '*.ko' -exec cp {} AnyKernel3/modules/ \;
-
-          # FIX 6: Removed indentation inside the EOF block so the shell script doesn't get broken by spaces
-          cat > AnyKernel3/anykernel.sh << 'EOF'
-#!/sbin/sh
-export KERNEL=Image
-export DTBO=dtbo.img
-export DTB=dtb
-export MODULESDIR=modules
-dump_boot;
-write_boot;
-EOF
-          chmod +x AnyKernel3/anykernel.sh
-
-          cd AnyKernel3
-          zip -r9 ../Mi10Ultra_MonitorMode_AnyKernel3.zip *
-
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Mi10Ultra_MonitorMode_Kernel
-          path: Mi10Ultra_MonitorMode_AnyKernel3.zip
+          name: NetHunter-cas-AnyKernel3
+          path: NetHunter-cas-AnyKernel3.zip
