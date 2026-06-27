@@ -25,13 +25,18 @@ jobs:
           sudo apt install -y bc bison flex device-tree-compiler git make python3 kmod cpio rsync zip
           sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
-      - name: Download prebuilt Clang 21 tarball (instead of massive git clone)
+      - name: Download prebuilt Clang 21 using sparse Git checkout
         run: |
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747.tar.gz -O clang.tar.gz
-          mkdir -p clang-toolchain/clang-r487747
-          tar -xzf clang.tar.gz -C clang-toolchain/clang-r487747
-          echo "$PWD/clang-toolchain/clang-r487747/bin" >> $GITHUB_PATH
-          rm clang.tar.gz
+          # Clones only commit metadata, no files yet
+          git clone --depth 1 --filter=blob:none --single-branch --branch main \
+            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang-toolchain
+          cd clang-toolchain
+          # Tell Git to only grab the clang-r487747 folder
+          git sparse-checkout set clang-r487747
+          # This downloads ONLY that folder (approx 1.5GB)
+          git checkout
+          echo "$PWD/clang-r487747/bin" >> $GITHUB_PATH
+          cd ..
 
       - name: Apply custom patches (if any)
         run: |
