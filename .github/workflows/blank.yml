@@ -36,6 +36,8 @@ jobs:
           cd clang-toolchain
           git sparse-checkout set clang-r487747
           git checkout
+          # Make sure binaries are executable
+          chmod +x clang-r487747/bin/*
           echo "$PWD/clang-r487747/bin" >> $GITHUB_PATH
           cd ..
 
@@ -43,7 +45,7 @@ jobs:
         run: |
           git clone ${{ env.KERNEL_SOURCE_URL }} --depth 1 --branch ${{ env.KERNEL_BRANCH }} kernel_source
 
-      - name: Configure kernel for monitor mode (fix missing Kconfig)
+      - name: Configure kernel for monitor mode
         run: |
           cp stock_config.txt kernel_source/.config
           cd kernel_source
@@ -73,12 +75,12 @@ jobs:
           sed -i '/^CONFIG_KSU_/d' .config
           echo '# CONFIG_KSU is not set' >> .config
 
-          # 🛑 CRITICAL: Comment out the missing KernelSU Kconfig source line
+          # Comment out the missing KernelSU Kconfig source line
           sed -i 's|source "drivers/kernelsu/Kconfig"|# source "drivers/kernelsu/Kconfig"|' drivers/Kconfig
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          # Do NOT use LLVM=1 here – config step works fine without it
+          # Use the system linker (not LLVM) for config step
           yes "" | make oldconfig
 
       - name: Compile Kernel, dtb, dtbo & modules
@@ -87,10 +89,10 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LLVM=1
-          # Ensure ld.lld is found – set LD to its absolute path
-          export LD=$(which ld.lld)
-          # Verify it's found
-          echo "Using ld.lld at: $LD"
+          # Force the use of our downloaded ld.lld
+          export LD=$PWD/../clang-toolchain/clang-r487747/bin/ld.lld
+          # Also add clang bin directory to PATH for good measure
+          export PATH=$PWD/../clang-toolchain/clang-r487747/bin:$PATH
           
           make Image dtbo.img dtb modules -j$(nproc) || \
           make dtbo.img dtb modules -j$(nproc) || \
