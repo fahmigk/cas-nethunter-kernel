@@ -22,21 +22,19 @@ jobs:
       - name: Pull and Placement Fix for KernelSU-Next
         run: |
           cd kernel
-          # Ensure any existing folder is removed cleanly
           rm -rf drivers/kernelsu
           
-          # Clone into a temp folder first
+          # Clone KernelSU-Next to a temporary location
           git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
           
-          # Copy the internal kernel directory contents directly to drivers/kernelsu
-          # This satisfies the exact path expected by drivers/Kconfig
+          # Safely copy into place so it satisfies drivers/Kconfig path layouts
           cp -r /tmp/ksu/kernel drivers/kernelsu
           echo "KernelSU source properly placed in drivers/kernelsu"
 
       - name: Patch Kernel Source (Fix GCC Hard Errors)
         run: |
           cd kernel
-          # Fix bpf_trace.c inline varargs hard error for GCC
+          # Fix bpf_trace.c inline varargs hard error for GCC cross-compilation
           sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
           echo "Patched bpf_trace.c successfully"
 
@@ -72,8 +70,12 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CC=aarch64-linux-gnu-gcc
           
-          # Build with KCFLAGS to suppress format warnings
-          make -j$(nproc) O=out KCFLAGS="-Wno-error" Image.gz dtbo.img modules
+          # FIX: Build base 'Image' and 'dtbo.img' safely to bypass the Makefile wrapper bug
+          make -j$(nproc) O=out KCFLAGS="-Wno-error" Image dtbo.img modules
+          
+          # Natively compress the image using safe system tools
+          gzip -9 out/arch/arm64/boot/Image
+          mv out/arch/arm64/boot/Image.gz out/arch/arm64/boot/Image.gz
           
           echo "Build finished!"
           ls -lh out/arch/arm64/boot/
