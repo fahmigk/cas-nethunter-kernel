@@ -57,13 +57,12 @@ jobs:
           sed -i 's/^# CONFIG_MT7610U is not set/CONFIG_MT7610U=y/' .config
           sed -i 's/^# CONFIG_MT7612U is not set/CONFIG_MT7612U=y/' .config
 
-      - name: Build using build.sh
+      - name: Compile Kernel, dtb, dtbo & modules
         run: |
-          chmod +x build.sh
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LLVM=1
-          ./build.sh
+          make -j$(nproc) Image dtbo.img dtb modules
 
       - name: Package as AnyKernel3 ZIP
         run: |
