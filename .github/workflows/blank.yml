@@ -33,18 +33,17 @@ jobs:
           cd kernel
           rm -rf drivers/kernelsu
           
-          # 1. Target the exact v0.9.5 release branch compatible with non-GKI 4.19 architecture
+          # Clone clean v0.9.5 tag
           git clone --depth=1 -b v0.9.5 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
           cp -r /tmp/ksu/kernel drivers/kernelsu
           
-          # 2. CRITICAL HEADER OVERWRITE FIX:
-          # Force overwrite the outdated global kernel headers with the true v0.9.5 definitions
-          # This guarantees that 'KSU_MAX_PACKAGE_NAME' is visible to the compiler
+          # Synchronize headers across all directory structures
           mkdir -p include/uapi/linux
-          cp -f /tmp/ksu/kernel/include/uapi/linux/kernelsu.h include/uapi/linux/ 2>/dev/null || true
+          cp -f /tmp/ksu/kernel/include/uapi/linux/kernelsu.h include/uapi/linux/
           cp -rf /tmp/ksu/kernel/include/uapi/* include/uapi/ 2>/dev/null || true
+          cp -rf /tmp/ksu/kernel/include/uapi/* drivers/kernelsu/ 2>/dev/null || true
           
-          echo "KernelSU v0.9.5 source and matching UAPI headers successfully placed!"
+          echo "KernelSU v0.9.5 environment headers explicitly unified!"
 
       - name: Configure Kernel Architecture & Fix Touch Drivers
         run: |
@@ -66,7 +65,7 @@ jobs:
           # Initialize configuration files using the modern LLVM engine layout
           make O=out cas_defconfig LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
           
-          # Append NetHunter WiFi and HID parameters directly into configuration
+          # FIXED: Compile drivers as built-in (=y) instead of modules (=m) to bypass signature checks
           cat <<EOF >> out/.config
           CONFIG_STAGING=y
           CONFIG_WLAN_VENDOR_REALTEK=y
@@ -83,6 +82,8 @@ jobs:
           CONFIG_USB_CONFIGFS=y
           CONFIG_USB_CONFIGFS_F_HID=y
           CONFIG_USB_G_HID=y
+          CONFIG_MODULE_SIG=n
+          CONFIG_MODULE_SIG_FORCE=n
           EOF
           
           # Sync and validate options
@@ -121,11 +122,7 @@ jobs:
           
           cp ../kernel/out/arch/arm64/boot/dtbo.img . || true
           
-          # Package compiled kernel external network modules (.ko)
-          mkdir -p modules/vendor/lib/modules
-          find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
-          
-          # Build package file
+          # Build package file (Drivers are built-in now, no raw .ko staging needed)
           zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
           echo "Flashable AnyKernel3 ZIP successfully constructed!"
 
