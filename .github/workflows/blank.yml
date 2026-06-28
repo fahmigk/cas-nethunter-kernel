@@ -1,41 +1,57 @@
-name: Build Custom NetHunter & ReSukiSU Kernel (cas)
+name: Build Mi10Ultra NetHunter Kernel
 
 on:
-  workflow_dispatch: 
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  build-kernel:
-    name: Compile Base Kernel
+  build:
     runs-on: ubuntu-22.04
     steps:
-      # Step 1: Target Waddah's exact Android 16 unified kernel repository branch
-      - name: Checkout Target Kernel Source
+      # Step 1: Checkout runner workspace environment
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          repository: wshamroukh/android_kernel_xiaomi_sm8250
-          ref: android16-aptusitu
-          path: kernel/source
 
-      # Step 2: Remove Duplicate Driver & Strip Warnings
-      - name: Patch Makefiles & Pre-Configure Environment
+      # Step 2: Establish base platform build constraints
+      - name: Install Build Dependencies
         run: |
-          cd kernel/source
+          sudo apt-get update
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential device-tree-compiler
+
+      # Step 3: Secure the official AOSP Clang toolchain 
+      - name: Download AOSP Clang Toolchain
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/clang
+          cd $GITHUB_WORKSPACE/clang
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android11-release/clang-r383902.tar.gz
+          tar -xzf clang-r383902.tar.gz
+          rm -f clang-r383902.tar.gz
+          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
+
+      # Step 4: Clone Waddah's exact Android 16 active source branch
+      - name: Clone Kernel Source
+        run: |
+          git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
+
+      # Step 5: Strip compiler restrictions & inject missing NetHunter flags
+      - name: Configure Kernel Architecture
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           
-          # Disable Warnings-as-Errors globally to prevent driver warning crashes
+          # Force remove warnings-as-errors across all Makefiles
           find . -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
-          echo 'KBUILD_CFLAGS += -Wno-unknown-warning-option' >> Makefile
-
-          # Fix duplicate touchscreen definition that crashes the linking phase
+          
+          # Resolve multiple definition linker collision in duplicate touchscreen modules
           sed -i '/fts_521/d' drivers/input/touchscreen/Makefile
           
-          # Inject full architectural NetHunter Wireless/HID requirements into the defconfig
-          cat <<EOF >> arch/arm64/configs/cas_defconfig
+          # Initialize the stock target layout defconfig
+          make O=out cas_defconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
           
-          # Foundational NetHunter Core Network Architecture
+          # Append NetHunter WiFi and HID framework variables cleanly into the target configuration
+          cat <<EOF >> out/.config
           CONFIG_STAGING=y
           CONFIG_WLAN_VENDOR_REALTEK=y
           CONFIG_MAC80211=y
@@ -46,40 +62,61 @@ jobs:
           CONFIG_WIRELESS=y
           CONFIG_NL80211_TESTMODE=y
           CONFIG_MAC80211_MESH=y
-
-          # Native Built-in Realtek 8188EU Support
           CONFIG_R8188EU=y
           CONFIG_8188EU_AP_MODE=y
-
-          # HID Gadget & Keyboard Injection Emulation
           CONFIG_USB_CONFIGFS=y
           CONFIG_USB_CONFIGFS_F_HID=y
           CONFIG_USB_G_HID=y
           EOF
-
-      # Step 3: Run the build action using its native automatic KernelSU setup manager
-      - name: Run Build Execution Engine
-        uses: dabao1955/kernel_build_action@main
-        with:
-          kernel-url: kernel/source/
-          config: cas_defconfig
-          arch: arm64
-          android-version: 12
-
-          # Natively manage KernelSU integration to avoid manual symlink/path syntax errors
-          ksu: true
-          ksu-version: main
           
-          nethunter: true
-          nethunter-patch: false 
+          # Finalize configuration syncing
+          make O=out olddefconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
 
-          # Use AOSP Clang toolchain along with full LLVM variable management
-          aosp-clang: true
-          aosp-clang-version: r383902
-          aosp-gcc: true
-          disable-lto: true
+      # Step 6: Compile using full LLVM environment definitions
+      - name: Build Kernel Image and Modules
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+          
+          # Build via unified target matrix to ensure all background techpacks map sequentially
+          make -j$(nproc) O=out CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- KCFLAGS="-Wno-error"
+          
+          echo "Build completely finished!"
+          ls -lh out/arch/arm64/boot/
 
-          # Package into a flashable AnyKernel3 zip and automatically create a GitHub Release
-          anykernel3: true
-          release: true
-          access-token: ${{ secrets.GITHUB_TOKEN }}
+      # Step 7: Gather compiled resources into AnyKernel3 flasher ZIP
+      - name: Clone AnyKernel3 and Package
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3 anykernel
+          cd anykernel
+          
+          # Adjust settings for Mi 10 Ultra (cas) partition structure
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
+          sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
+          
+          # Natively capture and package the image files
+          if [ -f "../kernel/out/arch/arm64/boot/Image.gz" ]; then
+            cp ../kernel/out/arch/arm64/boot/Image.gz .
+          elif [ -f "../kernel/out/arch/arm64/boot/Image" ]; then
+            gzip -9c ../kernel/out/arch/arm64/boot/Image > Image.gz
+          fi
+          
+          cp ../kernel/out/arch/arm64/boot/dtbo.img . || true
+          
+          # Collect external compiled wireless driver module blobs (.ko)
+          mkdir -p modules/vendor/lib/modules
+          find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
+          
+          # Archive into a clean ZIP payload
+          zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
+          echo "Flashable AnyKernel3 ZIP output complete!"
+
+      # Step 8: Upload output directly back to your GitHub Actions run console
+      - name: Upload Finished Kernel Payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetHunter-cas-AnyKernel3
+          path: NetHunter-cas-AnyKernel3.zip
