@@ -50,10 +50,10 @@ jobs:
           # Resolve multiple definition linker collision in duplicate touchscreen modules
           sed -i '/fts_521/d' drivers/input/touchscreen/Makefile
           
-          # CRITICAL FIX: Added LLVM=1 and LLVM_IAS=1 to use the integrated LLVM linker (ld.lld)
+          # Initialize configuration files using the modern LLVM engine layout
           make O=out cas_defconfig LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
           
-          # Append NetHunter WiFi and HID variables into the target configuration
+          # Append NetHunter WiFi and HID parameters directly into configuration
           cat <<EOF >> out/.config
           CONFIG_STAGING=y
           CONFIG_WLAN_VENDOR_REALTEK=y
@@ -72,7 +72,7 @@ jobs:
           CONFIG_USB_G_HID=y
           EOF
           
-          # Finalize configuration syncing with LLVM
+          # Sync and validate options
           make O=out olddefconfig LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
 
       - name: Build Kernel Image and Modules
@@ -82,23 +82,25 @@ jobs:
           export SUBARCH=arm64
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           
-          # Compile with unified LLVM components to drive a flawless compilation
           make -j$(nproc) O=out LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- KCFLAGS="-Wno-error"
-          
           echo "Build completely finished!"
-          ls -lh out/arch/arm64/boot/
 
       - name: Clone AnyKernel3 and Package
         run: |
           git clone https://github.com/osm0sis/AnyKernel3 anykernel
           cd anykernel
           
-          # Adjust settings for Mi 10 Ultra (cas) partition structure
+          # HARDENED ANYKERNEL3 PATCHING: Directly overwrite the baseline configuration lines safely
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
           
-          # Package image binary objects
+          # Force set the partition block directly to the system's exact symlink path
+          sed -i 's|^block=.*|block=/dev/block/by-name/boot;|g' anykernel.sh
+          
+          # Set the internal descriptive variables cleanly
+          sed -i 's/kernel.string=.*/kernel.string=NetHunter Custom Kernel for Mi10Ultra by fahmigk/g' anykernel.sh
+          
+          # Extract and copy the compiled images
           if [ -f "../kernel/out/arch/arm64/boot/Image.gz" ]; then
             cp ../kernel/out/arch/arm64/boot/Image.gz .
           elif [ -f "../kernel/out/arch/arm64/boot/Image" ]; then
@@ -107,13 +109,13 @@ jobs:
           
           cp ../kernel/out/arch/arm64/boot/dtbo.img . || true
           
-          # Collect wireless modules (.ko)
+          # Collect external driver modules
           mkdir -p modules/vendor/lib/modules
           find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
-          # Archive into clean flashable payload structure
+          # Build package file
           zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
-          echo "Flashable AnyKernel3 ZIP complete!"
+          echo "Flashable AnyKernel3 ZIP successfully constructed!"
 
       - name: Upload Finished Kernel Payload
         uses: actions/upload-artifact@v4
