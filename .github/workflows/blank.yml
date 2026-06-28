@@ -19,7 +19,8 @@ jobs:
         run: |
           mkdir -p $GITHUB_WORKSPACE/clang
           cd $GITHUB_WORKSPACE/clang
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android11-release/clang-r383902.tar.gz
+          # FIXED TOOLCHAIN LINK: Uses the active refs/heads/android12-release pointer to resolve the HTTP 404 error code 8 failure
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r383902.tar.gz
           tar -xzf clang-r383902.tar.gz
           rm -f clang-r383902.tar.gz
           echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
