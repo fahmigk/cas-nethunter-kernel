@@ -36,7 +36,7 @@ jobs:
           cp -r /tmp/ksu/kernel drivers/kernelsu
           echo "KernelSU source properly placed in drivers/kernelsu"
 
-      - name: Configure Kernel Architecture
+      - name: Configure Kernel Architecture & Fix Touch Drivers
         run: |
           cd kernel
           export ARCH=arm64
@@ -47,8 +47,13 @@ jobs:
           find . -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           
-          # Resolve multiple definition linker collision in duplicate touchscreen modules
-          sed -i '/fts_521/d' drivers/input/touchscreen/Makefile
+          # FIX LINKING COLLISION WITHOUT DELETING THE DRIVER:
+          # We rename the initialization symbol inside the specific fts_521 module so both touch variants compile without overlapping symbols.
+          if [ -d "drivers/input/touchscreen/fts_521" ]; then
+            find drivers/input/touchscreen/fts_521/ -type f -exec sed -i 's/fts_driver_init/fts_521_driver_init/g' {} +
+            find drivers/input/touchscreen/fts_521/ -type f -exec sed -i 's/fts_driver_exit/fts_521_driver_exit/g' {} +
+            echo "Successfully isolated fts_521 touch symbols!"
+          fi
           
           # Initialize configuration files using the modern LLVM engine layout
           make O=out cas_defconfig LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
@@ -90,17 +95,18 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3 anykernel
           cd anykernel
           
-          # HARDENED ANYKERNEL3 PATCHING: Directly overwrite the baseline configuration lines safely
+          # Adjust general script properties inside anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
+          sed -i 's/IS_SLOT_DEVICE=1/IS_SLOT_DEVICE=0/g' anykernel.sh
           
-          # Force set the partition block directly to the system's exact symlink path
-          sed -i 's|^block=.*|block=/dev/block/by-name/boot;|g' anykernel.sh
+          # Target the exact uppercase variable to replace the legacy path with the correct device block
+          sed -i 's|^BLOCK=.*|BLOCK=/dev/block/by-name/boot;|g' anykernel.sh
           
-          # Set the internal descriptive variables cleanly
+          # Apply the descriptive naming parameter
           sed -i 's/kernel.string=.*/kernel.string=NetHunter Custom Kernel for Mi10Ultra by fahmigk/g' anykernel.sh
           
-          # Extract and copy the compiled images
+          # Process and compress output boot binary components
           if [ -f "../kernel/out/arch/arm64/boot/Image.gz" ]; then
             cp ../kernel/out/arch/arm64/boot/Image.gz .
           elif [ -f "../kernel/out/arch/arm64/boot/Image" ]; then
@@ -109,7 +115,7 @@ jobs:
           
           cp ../kernel/out/arch/arm64/boot/dtbo.img . || true
           
-          # Collect external driver modules
+          # Package compiled kernel external network modules (.ko)
           mkdir -p modules/vendor/lib/modules
           find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
