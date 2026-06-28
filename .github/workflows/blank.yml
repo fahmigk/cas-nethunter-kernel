@@ -13,7 +13,17 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential gcc-aarch64-linux-gnu device-tree-compiler
+          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential device-tree-compiler OpenJDK-11-jdk
+
+      - name: Download AOSP Clang Toolchain
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/clang
+          cd $GITHUB_WORKSPACE/clang
+          # Download stable AOSP Clang r383902
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android11-release/clang-r383902.tar.gz
+          tar -xzf clang-r383902.tar.gz
+          rm -f clang-r383902.tar.gz
+          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
 
       - name: Clone Kernel Source
         run: |
@@ -23,30 +33,18 @@ jobs:
         run: |
           cd kernel
           rm -rf drivers/kernelsu
-          
-          # Clone KernelSU-Next to a temporary location
           git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
-          
-          # Safely copy into place so it satisfies drivers/Kconfig path layouts
           cp -r /tmp/ksu/kernel drivers/kernelsu
           echo "KernelSU source properly placed in drivers/kernelsu"
-
-      - name: Patch Kernel Source (Fix GCC Hard Errors)
-        run: |
-          cd kernel
-          # Fix bpf_trace.c inline varargs hard error for GCC cross-compilation
-          sed -i 's/static inline __printf(1, 0) int bpf_do_trace_printk/static __printf(1, 0) int bpf_do_trace_printk/' kernel/trace/bpf_trace.c
-          echo "Patched bpf_trace.c successfully"
 
       - name: Configure Kernel
         run: |
           cd kernel
           export ARCH=arm64
           export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=aarch64-linux-gnu-gcc
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           
-          make O=out cas_defconfig
+          make O=out cas_defconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
           
           # Enable ReSukiSU / KernelSU
           echo "CONFIG_KSU=y" >> out/.config
@@ -60,19 +58,17 @@ jobs:
           echo "CONFIG_MAC80211=y" >> out/.config
           echo "CONFIG_WIRELESS_EXT=y" >> out/.config
           
-          make O=out olddefconfig
+          make O=out olddefconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
 
       - name: Build Kernel Image and Modules
         run: |
           cd kernel
           export ARCH=arm64
           export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=aarch64-linux-gnu-gcc
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           
-          # CRITICAL FIX: Build using the standard architectural chain instead of granular targets.
-          # This prevents the Makefile '__build_one_by_one' rule execution crash.
-          make -j$(nproc) O=out KCFLAGS="-Wno-error"
+          # Compile with Clang to guarantee techpack drivers build successfully
+          make -j$(nproc) O=out CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- KCFLAGS="-Wno-error"
           
           echo "Build finished!"
           ls -lh out/arch/arm64/boot/
@@ -82,12 +78,12 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3 anykernel
           cd anykernel
           
-          # Configure AnyKernel3 for Mi 10 Ultra (cas) - A Only Partition
+          # Configure AnyKernel3 for Mi 10 Ultra (cas)
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
           
-          # Copy compiled kernel files (Baking in your freshly verified target architecture binaries)
+          # Copy compiled kernel components
           if [ -f "../kernel/out/arch/arm64/boot/Image.gz" ]; then
             cp ../kernel/out/arch/arm64/boot/Image.gz .
           else
@@ -96,11 +92,11 @@ jobs:
           
           cp ../kernel/out/arch/arm64/boot/dtbo.img . || cp ../kernel/out/arch/arm64/boot/dts/vendor/qcom/dtbo.img . || true
           
-          # Copy compiled WiFi modules into vendor structure
+          # Copy compiled external modules (.ko)
           mkdir -p modules/vendor/lib/modules
           find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
-          # Create flashable ZIP
+          # Package ZIP
           zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
           echo "AnyKernel3 ZIP created!"
           ls -lh ../NetHunter-cas-AnyKernel3.zip
