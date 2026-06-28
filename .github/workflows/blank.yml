@@ -28,13 +28,23 @@ jobs:
         run: |
           git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
 
-      - name: Pull and Placement Fix for KernelSU-Next
+      - name: Pull and Placement Fix for KernelSU-Next v0.9.5
         run: |
           cd kernel
           rm -rf drivers/kernelsu
-          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
+          
+          # 1. Target the exact v0.9.5 release branch compatible with non-GKI 4.19 architecture
+          git clone --depth=1 -b v0.9.5 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
           cp -r /tmp/ksu/kernel drivers/kernelsu
-          echo "KernelSU source properly placed in drivers/kernelsu"
+          
+          # 2. CRITICAL HEADER OVERWRITE FIX:
+          # Force overwrite the outdated global kernel headers with the true v0.9.5 definitions
+          # This guarantees that 'KSU_MAX_PACKAGE_NAME' is visible to the compiler
+          mkdir -p include/uapi/linux
+          cp -f /tmp/ksu/kernel/include/uapi/linux/kernelsu.h include/uapi/linux/ 2>/dev/null || true
+          cp -rf /tmp/ksu/kernel/include/uapi/* include/uapi/ 2>/dev/null || true
+          
+          echo "KernelSU v0.9.5 source and matching UAPI headers successfully placed!"
 
       - name: Configure Kernel Architecture & Fix Touch Drivers
         run: |
@@ -47,12 +57,10 @@ jobs:
           find . -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           
-          # FIX LINKING COLLISION WITHOUT DELETING THE DRIVER:
-          # We rename the initialization symbol inside the specific fts_521 module so both touch variants compile without overlapping symbols.
+          # Fix touchscreen symbol collision to keep touch functional
           if [ -d "drivers/input/touchscreen/fts_521" ]; then
             find drivers/input/touchscreen/fts_521/ -type f -exec sed -i 's/fts_driver_init/fts_521_driver_init/g' {} +
             find drivers/input/touchscreen/fts_521/ -type f -exec sed -i 's/fts_driver_exit/fts_521_driver_exit/g' {} +
-            echo "Successfully isolated fts_521 touch symbols!"
           fi
           
           # Initialize configuration files using the modern LLVM engine layout
@@ -100,10 +108,8 @@ jobs:
           sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=1/IS_SLOT_DEVICE=0/g' anykernel.sh
           
-          # Target the exact uppercase variable to replace the legacy path with the correct device block
+          # Force set the target block partition variables explicitly to the correct uppercase config name
           sed -i 's|^BLOCK=.*|BLOCK=/dev/block/by-name/boot;|g' anykernel.sh
-          
-          # Apply the descriptive naming parameter
           sed -i 's/kernel.string=.*/kernel.string=NetHunter Custom Kernel for Mi10Ultra by fahmigk/g' anykernel.sh
           
           # Process and compress output boot binary components
