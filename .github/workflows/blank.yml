@@ -1,108 +1,85 @@
-name: Build Mi10Ultra NetHunter Kernel
+name: Build Custom NetHunter & ReSukiSU Kernel (cas)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: 
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  build-kernel:
+    name: Compile Base Kernel
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Repository
+      # Step 1: Target Waddah's exact Android 16 unified kernel repository branch
+      - name: Checkout Target Kernel Source
         uses: actions/checkout@v4
-
-      - name: Install Build Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential device-tree-compiler OpenJDK-11-jdk
-
-      - name: Download AOSP Clang Toolchain
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/clang
-          cd $GITHUB_WORKSPACE/clang
-          # Download stable AOSP Clang r383902
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android11-release/clang-r383902.tar.gz
-          tar -xzf clang-r383902.tar.gz
-          rm -f clang-r383902.tar.gz
-          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
-
-      - name: Clone Kernel Source
-        run: |
-          git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
-
-      - name: Pull and Placement Fix for KernelSU-Next
-        run: |
-          cd kernel
-          rm -rf drivers/kernelsu
-          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
-          cp -r /tmp/ksu/kernel drivers/kernelsu
-          echo "KernelSU source properly placed in drivers/kernelsu"
-
-      - name: Configure Kernel
-        run: |
-          cd kernel
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-          
-          make O=out cas_defconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
-          
-          # Enable ReSukiSU / KernelSU
-          echo "CONFIG_KSU=y" >> out/.config
-          echo "CONFIG_KPROBES=y" >> out/.config
-          
-          # Enable NetHunter WiFi Drivers
-          echo "CONFIG_RTL8188EUS=m" >> out/.config
-          echo "CONFIG_RTL8812AU=m" >> out/.config
-          echo "CONFIG_RTL88X2BU=m" >> out/.config
-          echo "CONFIG_CFG80211=y" >> out/.config
-          echo "CONFIG_MAC80211=y" >> out/.config
-          echo "CONFIG_WIRELESS_EXT=y" >> out/.config
-          
-          make O=out olddefconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
-
-      - name: Build Kernel Image and Modules
-        run: |
-          cd kernel
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-          
-          # Compile with Clang to guarantee techpack drivers build successfully
-          make -j$(nproc) O=out CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- KCFLAGS="-Wno-error"
-          
-          echo "Build finished!"
-          ls -lh out/arch/arm64/boot/
-
-      - name: Clone AnyKernel3 and Package
-        run: |
-          git clone https://github.com/osm0sis/AnyKernel3 anykernel
-          cd anykernel
-          
-          # Configure AnyKernel3 for Mi 10 Ultra (cas)
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
-          sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
-          
-          # Copy compiled kernel components
-          if [ -f "../kernel/out/arch/arm64/boot/Image.gz" ]; then
-            cp ../kernel/out/arch/arm64/boot/Image.gz .
-          else
-            gzip -c ../kernel/out/arch/arm64/boot/Image > Image.gz
-          fi
-          
-          cp ../kernel/out/arch/arm64/boot/dtbo.img . || cp ../kernel/out/arch/arm64/boot/dts/vendor/qcom/dtbo.img . || true
-          
-          # Copy compiled external modules (.ko)
-          mkdir -p modules/vendor/lib/modules
-          find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
-          
-          # Package ZIP
-          zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
-          echo "AnyKernel3 ZIP created!"
-          ls -lh ../NetHunter-cas-AnyKernel3.zip
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
         with:
-          name: NetHunter-cas-AnyKernel3
-          path: NetHunter-cas-AnyKernel3.zip
+          repository: wshamroukh/android_kernel_xiaomi_sm8250
+          ref: android16-aptusitu
+          path: kernel/source
+
+      # Step 2: Remove Duplicate Driver & Strip Warnings
+      - name: Patch Makefiles & Pre-Configure Environment
+        run: |
+          cd kernel/source
+          
+          # Disable Warnings-as-Errors globally to prevent driver warning crashes
+          find . -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
+          find . -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
+          echo 'KBUILD_CFLAGS += -Wno-unknown-warning-option' >> Makefile
+
+          # Fix duplicate touchscreen definition that crashes the linking phase
+          sed -i '/fts_521/d' drivers/input/touchscreen/Makefile
+          
+          # Inject full architectural NetHunter Wireless/HID requirements into the defconfig
+          cat <<EOF >> arch/arm64/configs/cas_defconfig
+          
+          # Foundational NetHunter Core Network Architecture
+          CONFIG_STAGING=y
+          CONFIG_WLAN_VENDOR_REALTEK=y
+          CONFIG_MAC80211=y
+          CONFIG_CFG80211=y
+          CONFIG_CFG80211_WEXT=y
+          CONFIG_MAC80211_LEDS=y
+          CONFIG_RFKILL=y
+          CONFIG_WIRELESS=y
+          CONFIG_NL80211_TESTMODE=y
+          CONFIG_MAC80211_MESH=y
+
+          # Native Built-in Realtek 8188EU Support
+          CONFIG_R8188EU=y
+          CONFIG_8188EU_AP_MODE=y
+
+          # HID Gadget & Keyboard Injection Emulation
+          CONFIG_USB_CONFIGFS=y
+          CONFIG_USB_CONFIGFS_F_HID=y
+          CONFIG_USB_G_HID=y
+          EOF
+
+      # Step 3: Run the build action using its native automatic KernelSU setup manager
+      - name: Run Build Execution Engine
+        uses: dabao1955/kernel_build_action@main
+        with:
+          kernel-url: kernel/source/
+          config: cas_defconfig
+          arch: arm64
+          android-version: 12
+
+          # Natively manage KernelSU integration to avoid manual symlink/path syntax errors
+          ksu: true
+          ksu-version: main
+          
+          nethunter: true
+          nethunter-patch: false 
+
+          # Use AOSP Clang toolchain along with full LLVM variable management
+          aosp-clang: true
+          aosp-clang-version: r383902
+          aosp-gcc: true
+          disable-lto: true
+
+          # Package into a flashable AnyKernel3 zip and automatically create a GitHub Release
+          anykernel3: true
+          release: true
+          access-token: ${{ secrets.GITHUB_TOKEN }}
