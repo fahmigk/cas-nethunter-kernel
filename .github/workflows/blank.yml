@@ -7,17 +7,14 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      # Step 1: Checkout runner workspace environment
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Step 2: Establish base platform build constraints
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y git python3 bison flex libssl-dev libelf-dev bc zip unzip curl wget cpio rsync build-essential device-tree-compiler
 
-      # Step 3: Secure the official AOSP Clang toolchain 
       - name: Download AOSP Clang Toolchain
         run: |
           mkdir -p $GITHUB_WORKSPACE/clang
@@ -27,12 +24,18 @@ jobs:
           rm -f clang-r383902.tar.gz
           echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
 
-      # Step 4: Clone Waddah's exact Android 16 active source branch
       - name: Clone Kernel Source
         run: |
           git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
 
-      # Step 5: Strip compiler restrictions & inject missing NetHunter flags
+      - name: Pull and Placement Fix for KernelSU-Next
+        run: |
+          cd kernel
+          rm -rf drivers/kernelsu
+          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next /tmp/ksu
+          cp -r /tmp/ksu/kernel drivers/kernelsu
+          echo "KernelSU source properly placed in drivers/kernelsu"
+
       - name: Configure Kernel Architecture
         run: |
           cd kernel
@@ -40,17 +43,17 @@ jobs:
           export SUBARCH=arm64
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           
-          # Force remove warnings-as-errors across all Makefiles
+          # Force remove warnings-as-errors globally
           find . -name "Makefile" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           find . -name "Kbuild" -exec sed -i 's/-Werror/-Wno-error/g' {} +
           
           # Resolve multiple definition linker collision in duplicate touchscreen modules
           sed -i '/fts_521/d' drivers/input/touchscreen/Makefile
           
-          # Initialize the stock target layout defconfig
-          make O=out cas_defconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
+          # CRITICAL FIX: Added LLVM=1 and LLVM_IAS=1 to use the integrated LLVM linker (ld.lld)
+          make O=out cas_defconfig LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
           
-          # Append NetHunter WiFi and HID framework variables cleanly into the target configuration
+          # Append NetHunter WiFi and HID variables into the target configuration
           cat <<EOF >> out/.config
           CONFIG_STAGING=y
           CONFIG_WLAN_VENDOR_REALTEK=y
@@ -69,10 +72,9 @@ jobs:
           CONFIG_USB_G_HID=y
           EOF
           
-          # Finalize configuration syncing
-          make O=out olddefconfig CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
+          # Finalize configuration syncing with LLVM
+          make O=out olddefconfig LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
 
-      # Step 6: Compile using full LLVM environment definitions
       - name: Build Kernel Image and Modules
         run: |
           cd kernel
@@ -80,13 +82,12 @@ jobs:
           export SUBARCH=arm64
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           
-          # Build via unified target matrix to ensure all background techpacks map sequentially
-          make -j$(nproc) O=out CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- KCFLAGS="-Wno-error"
+          # Compile with unified LLVM components to drive a flawless compilation
+          make -j$(nproc) O=out LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- KCFLAGS="-Wno-error"
           
           echo "Build completely finished!"
           ls -lh out/arch/arm64/boot/
 
-      # Step 7: Gather compiled resources into AnyKernel3 flasher ZIP
       - name: Clone AnyKernel3 and Package
         run: |
           git clone https://github.com/osm0sis/AnyKernel3 anykernel
@@ -97,7 +98,7 @@ jobs:
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=\/dev\/block\/by-name\/boot/g' anykernel.sh
           sed -i 's/is_slot_device=auto/is_slot_device=0/g' anykernel.sh
           
-          # Natively capture and package the image files
+          # Package image binary objects
           if [ -f "../kernel/out/arch/arm64/boot/Image.gz" ]; then
             cp ../kernel/out/arch/arm64/boot/Image.gz .
           elif [ -f "../kernel/out/arch/arm64/boot/Image" ]; then
@@ -106,15 +107,14 @@ jobs:
           
           cp ../kernel/out/arch/arm64/boot/dtbo.img . || true
           
-          # Collect external compiled wireless driver module blobs (.ko)
+          # Collect wireless modules (.ko)
           mkdir -p modules/vendor/lib/modules
           find ../kernel/out -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
-          # Archive into a clean ZIP payload
+          # Archive into clean flashable payload structure
           zip -r9 ../NetHunter-cas-AnyKernel3.zip . -x .git README.md .gitignore
-          echo "Flashable AnyKernel3 ZIP output complete!"
+          echo "Flashable AnyKernel3 ZIP complete!"
 
-      # Step 8: Upload output directly back to your GitHub Actions run console
       - name: Upload Finished Kernel Payload
         uses: actions/upload-artifact@v4
         with:
