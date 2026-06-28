@@ -28,13 +28,14 @@ jobs:
         run: |
           git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
 
-      - name: Inline Target ReSukiSU Source Trees & Align Signatures
+      - name: Inline Target ReSukiSU Source Trees
         run: |
           cd kernel
           rm -rf drivers/kernelsu
           
-          # Clone stable background source tree structure
-          git clone --depth=1 https://github.com/tiann/KernelSU.git /tmp/ksu_base
+          # CRITICAL FIX: Clone the actual ReSukiSU kernel driver repository! 
+          # This replaces the standard KernelSU so your 34935 ReSukiSU manager matches natively.
+          git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git /tmp/ksu_base
           cp -r /tmp/ksu_base/kernel drivers/kernelsu
           
           # Force build macro definitions matching SukiSU App Profile layout requirements
@@ -47,14 +48,7 @@ jobs:
           EOF
           cp -f include/uapi/linux/kernelsu.h drivers/kernelsu/
           
-          # HARD MATCH SIGNATURE FOR RESUKISU APK 34935
-          # Inject exactly what your manager application requires to trigger authorized root context
-          if [ -f "drivers/kernelsu/apk_sign.c" ]; then
-            sed -i 's/EXPECTED_SIZE = .*/EXPECTED_SIZE = 0x033b;/g' drivers/kernelsu/apk_sign.c
-            sed -i 's/EXPECTED_HASH = .*/EXPECTED_HASH = "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6";/g' drivers/kernelsu/apk_sign.c
-          fi
-          
-          echo "Target layout definitions and 34935 manager signature hashes explicitly verified!"
+          echo "ReSukiSU driver successfully injected!"
 
       - name: Configure Kernel Architecture & Fix Touch Drivers
         run: |
@@ -76,8 +70,9 @@ jobs:
           # Initialize configuration files using the modern LLVM engine layout
           make O=out cas_defconfig LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android-
           
-          # Compile drivers as built-in (=y) instead of modules (=m) to bypass Android 16 vermagic loading blocks
+          # Append driver triggers AND the core driver config parameters back into the config file
           cat <<EOF >> out/.config
+          CONFIG_KSU=y
           CONFIG_STAGING=y
           CONFIG_WLAN_VENDOR_REALTEK=y
           CONFIG_MAC80211=y
