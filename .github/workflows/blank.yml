@@ -28,15 +28,24 @@ jobs:
         run: |
           git clone -b android16-aptusitu https://github.com/wshamroukh/android_kernel_xiaomi_sm8250 kernel
 
-      - name: Inline Target ReSukiSU Source Trees
+      - name: Inline Target ReSukiSU Source Trees & Bypass Submodule Check
         run: |
           cd kernel
           rm -rf drivers/kernelsu
           
-          # CRITICAL FIX: Clone the actual ReSukiSU kernel driver repository! 
-          # This replaces the standard KernelSU so your 34935 ReSukiSU manager matches natively.
+          # Clone the actual ReSukiSU kernel driver repository
           git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git /tmp/ksu_base
           cp -r /tmp/ksu_base/kernel drivers/kernelsu
+          
+          # THE CRITICAL FIX: Initialize local git repositories to completely bypass the Kbuild check.
+          # The compiler halts with "You should use ReSukiSU as a git submodule" if it can't find a .git folder.
+          # We satisfy this natively by initializing a dummy git context inside the driver path.
+          cd drivers/kernelsu
+          git init
+          git config user.email "bot@example.com"
+          git config user.name "bot"
+          git commit --allow-empty -m "Dummy commit to bypass Kbuild checks"
+          cd ../..
           
           # Force build macro definitions matching SukiSU App Profile layout requirements
           mkdir -p include/uapi/linux
@@ -48,7 +57,22 @@ jobs:
           EOF
           cp -f include/uapi/linux/kernelsu.h drivers/kernelsu/
           
-          echo "ReSukiSU driver successfully injected!"
+          # DYNAMIC SIGNATURE PATCHING: 
+          # Safely locate apk_sign.c regardless of its subfolder layout and inject your manager's exact hash
+          SIGN_FILE=$(find drivers/kernelsu -name "apk_sign.c" | head -n 1)
+          if [ -n "$SIGN_FILE" ]; then
+            # Replace the 64-char hash string with your 34935 ReSukiSU manager hash
+            sed -i -E 's/"[a-f0-9]{64}"/"c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6"/g' "$SIGN_FILE"
+            # Replace EXPECTED_SIZE dynamically regardless of spacing/macro formatting
+            sed -i -E 's/(EXPECTED_SIZE[^0-9]*)[0-9]+/\1 827/g' "$SIGN_FILE"
+            sed -i -E 's/(EXPECTED_SIZE[^0-9a-fA-F]*)0x[0-9a-fA-F]+/\1 0x033b/g' "$SIGN_FILE"
+            echo "Successfully patched signature inside $SIGN_FILE"
+          else
+            echo "ERROR: apk_sign.c not found! Verification will fail!"
+            exit 1
+          fi
+          
+          echo "ReSukiSU driver successfully injected and check bypassed!"
 
       - name: Configure Kernel Architecture & Fix Touch Drivers
         run: |
@@ -73,6 +97,9 @@ jobs:
           # Append driver triggers AND the core driver config parameters back into the config file
           cat <<EOF >> out/.config
           CONFIG_KSU=y
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
           CONFIG_STAGING=y
           CONFIG_WLAN_VENDOR_REALTEK=y
           CONFIG_MAC80211=y
